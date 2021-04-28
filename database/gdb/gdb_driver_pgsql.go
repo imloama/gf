@@ -132,7 +132,7 @@ func (d *DriverPgsql) TableFields(link Link, table string, schema ...string) (fi
 		var (
 			result       Result
 			structureSql = fmt.Sprintf(`
-SELECT a.attname AS field, t.typname AS type FROM pg_class c, pg_attribute a 
+SELECT a.attname AS field, t.typname AS type,b.description as comment FROM pg_class c, pg_attribute a 
 LEFT OUTER JOIN pg_description b ON a.attrelid=b.objoid AND a.attnum = b.objsubid,pg_type t
 WHERE c.relname = '%s' and a.attnum > 0 and a.attrelid = c.oid and a.atttypid = t.oid 
 ORDER BY a.attnum`,
@@ -156,6 +156,7 @@ ORDER BY a.attnum`,
 				Index: i,
 				Name:  m["field"].String(),
 				Type:  m["type"].String(),
+				Comment: m["comment"].String(),
 			}
 		}
 		return fields
