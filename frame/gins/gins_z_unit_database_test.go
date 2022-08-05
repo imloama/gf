@@ -7,40 +7,40 @@
 package gins_test
 
 import (
-	"github.com/gogf/gf/debug/gdebug"
-	"github.com/gogf/gf/frame/gins"
-	"github.com/gogf/gf/os/gtime"
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/os/gfile"
-	"github.com/gogf/gf/test/gtest"
+	"github.com/gogf/gf/v2/frame/gins"
+	"github.com/gogf/gf/v2/os/gcfg"
+	"github.com/gogf/gf/v2/os/gfile"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/test/gtest"
 )
 
 func Test_Database(t *testing.T) {
 	databaseContent := gfile.GetContents(
-		gdebug.TestDataPath("database", "config.toml"),
+		gtest.DataPath("database", "config.toml"),
 	)
 	gtest.C(t, func(t *gtest.T) {
 		var err error
-		dirPath := gfile.TempDir(gtime.TimestampNanoStr())
+		dirPath := gfile.Temp(gtime.TimestampNanoStr())
 		err = gfile.Mkdir(dirPath)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		defer gfile.Remove(dirPath)
 
 		name := "config.toml"
 		err = gfile.PutContents(gfile.Join(dirPath, name), databaseContent)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 
-		err = gins.Config().AddPath(dirPath)
-		t.Assert(err, nil)
+		err = gins.Config().GetAdapter().(*gcfg.AdapterFile).AddPath(dirPath)
+		t.AssertNil(err)
 
-		defer gins.Config().Clear()
+		defer gins.Config().GetAdapter().(*gcfg.AdapterFile).Clear()
 
 		// for gfsnotify callbacks to refresh cache of config file
 		time.Sleep(500 * time.Millisecond)
 
-		//fmt.Println("gins Test_Database", Config().Get("test"))
+		// fmt.Println("gins Test_Database", Config().Get("test"))
 
 		dbDefault := gins.Database()
 		dbTest := gins.Database("test")

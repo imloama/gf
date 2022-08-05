@@ -9,12 +9,15 @@ package gtime
 import (
 	"sync"
 	"time"
+
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
 var (
 	// locationMap is time zone name to its location object.
 	// Time zone name is like: Asia/Shanghai.
 	locationMap = make(map[string]*time.Location)
+
 	// locationMu is used for concurrent safety for `locationMap`.
 	locationMu = sync.RWMutex{}
 )
@@ -41,7 +44,10 @@ func (t *Time) getLocationByZoneName(name string) (location *time.Location, err 
 	locationMu.RUnlock()
 	if location == nil {
 		location, err = time.LoadLocation(name)
-		if err == nil && location != nil {
+		if err != nil {
+			err = gerror.Wrapf(err, `time.LoadLocation failed for name "%s"`, name)
+		}
+		if location != nil {
 			locationMu.Lock()
 			locationMap[name] = location
 			locationMu.Unlock()

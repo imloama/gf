@@ -1,4 +1,4 @@
 package gf
 
-const VERSION = "v1.15.6"
+const VERSION = "v2.1.2"
 const AUTHORS = "john<john@goframe.org>"

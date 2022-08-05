@@ -7,61 +7,63 @@
 package gins_test
 
 import (
-	"github.com/gogf/gf/debug/gdebug"
-	"github.com/gogf/gf/frame/gins"
-	"github.com/gogf/gf/os/gtime"
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/os/gfile"
-	"github.com/gogf/gf/test/gtest"
+	"github.com/gogf/gf/v2/frame/gins"
+	"github.com/gogf/gf/v2/os/gcfg"
+	"github.com/gogf/gf/v2/os/gfile"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/test/gtest"
 )
 
 func Test_Redis(t *testing.T) {
 	redisContent := gfile.GetContents(
-		gdebug.TestDataPath("redis", "config.toml"),
+		gtest.DataPath("redis", "config.toml"),
 	)
 
 	gtest.C(t, func(t *gtest.T) {
 		var err error
-		dirPath := gfile.TempDir(gtime.TimestampNanoStr())
+		dirPath := gfile.Temp(gtime.TimestampNanoStr())
 		err = gfile.Mkdir(dirPath)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		defer gfile.Remove(dirPath)
 
 		name := "config.toml"
 		err = gfile.PutContents(gfile.Join(dirPath, name), redisContent)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 
-		err = gins.Config().AddPath(dirPath)
-		t.Assert(err, nil)
+		err = gins.Config().GetAdapter().(*gcfg.AdapterFile).AddPath(dirPath)
+		t.AssertNil(err)
 
-		defer gins.Config().Clear()
+		defer gins.Config().GetAdapter().(*gcfg.AdapterFile).Clear()
 
 		// for gfsnotify callbacks to refresh cache of config file
 		time.Sleep(500 * time.Millisecond)
 
-		//fmt.Println("gins Test_Redis", Config().Get("test"))
+		// fmt.Println("gins Test_Redis", Config().Get("test"))
 
-		redisDefault := gins.Redis()
-		redisCache := gins.Redis("cache")
-		redisDisk := gins.Redis("disk")
+		var (
+			redisDefault = gins.Redis()
+			redisCache   = gins.Redis("cache")
+			redisDisk    = gins.Redis("disk")
+		)
 		t.AssertNE(redisDefault, nil)
 		t.AssertNE(redisCache, nil)
 		t.AssertNE(redisDisk, nil)
 
-		r, err := redisDefault.Do("PING")
-		t.Assert(err, nil)
+		r, err := redisDefault.Do(ctx, "PING")
+		t.AssertNil(err)
 		t.Assert(r, "PONG")
 
-		r, err = redisCache.Do("PING")
-		t.Assert(err, nil)
+		r, err = redisCache.Do(ctx, "PING")
+		t.AssertNil(err)
 		t.Assert(r, "PONG")
 
-		_, err = redisDisk.Do("SET", "k", "v")
-		t.Assert(err, nil)
-		r, err = redisDisk.Do("GET", "k")
-		t.Assert(err, nil)
+		_, err = redisDisk.Do(ctx, "SET", "k", "v")
+		t.AssertNil(err)
+		r, err = redisDisk.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(r, []byte("v"))
 	})
 }

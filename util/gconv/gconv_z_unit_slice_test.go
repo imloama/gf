@@ -7,18 +7,21 @@
 package gconv_test
 
 import (
-	"github.com/gogf/gf/container/gvar"
 	"testing"
 
-	"github.com/gogf/gf/frame/g"
-	"github.com/gogf/gf/test/gtest"
-	"github.com/gogf/gf/util/gconv"
+	"github.com/gogf/gf/v2/container/gvar"
+
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
 func Test_Slice(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		value := 123.456
 		t.AssertEQ(gconv.Bytes("123"), []byte("123"))
+		t.AssertEQ(gconv.Bytes([]interface{}{1}), []byte{1})
+		t.AssertEQ(gconv.Bytes([]interface{}{300}), []byte("[300]"))
 		t.AssertEQ(gconv.Strings(value), []string{"123.456"})
 		t.AssertEQ(gconv.Ints(value), []int{123})
 		t.AssertEQ(gconv.Floats(value), []float64{123.456})
@@ -30,6 +33,22 @@ func Test_Slice(t *testing.T) {
 			gvar.New(2),
 		}
 		t.AssertEQ(gconv.SliceInt64(s), []int64{1, 2})
+	})
+}
+
+func Test_Slice_Ints(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		t.AssertEQ(gconv.Ints(nil), nil)
+		t.AssertEQ(gconv.Ints("[26, 27]"), []int{26, 27})
+		t.AssertEQ(gconv.Ints(" [26, 27] "), []int{26, 27})
+	})
+}
+
+func Test_Slice_Uint64s(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		t.AssertEQ(gconv.Uint64s(nil), nil)
+		t.AssertEQ(gconv.Uint64s("[26, 27]"), []uint64{26, 27})
+		t.AssertEQ(gconv.Uint64s(" [26, 27] "), []uint64{26, 27})
 	})
 }
 
@@ -83,6 +102,10 @@ func Test_Strings(t *testing.T) {
 			g.NewVar(3),
 		}
 		t.AssertEQ(gconv.Strings(array), []string{"1", "2", "3"})
+	})
+	// https://github.com/gogf/gf/issues/1750
+	gtest.C(t, func(t *gtest.T) {
+		t.AssertEQ(gconv.Strings("123"), []string{"123"})
 	})
 }
 
@@ -144,7 +167,7 @@ func Test_Slice_Structs(t *testing.T) {
 			{"id": 2, "name": "smith", "age": 20},
 		}
 		err := gconv.Structs(params, &users)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(len(users), 2)
 		t.Assert(users[0].Id, params[0]["id"])
 		t.Assert(users[0].Name, params[0]["name"])

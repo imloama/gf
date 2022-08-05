@@ -7,106 +7,83 @@
 package gredis_test
 
 import (
-	"github.com/gogf/gf/container/gvar"
-	"github.com/gogf/gf/frame/g"
-	"github.com/gogf/gf/util/guid"
-	"github.com/gogf/gf/util/gutil"
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/os/gtime"
-	"github.com/gogf/gf/util/gconv"
-
-	"github.com/gogf/gf/database/gredis"
-	"github.com/gogf/gf/test/gtest"
+	"github.com/gogf/gf/v2/container/gvar"
+	"github.com/gogf/gf/v2/database/gredis"
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/guid"
+	"github.com/gogf/gf/v2/util/gutil"
 )
 
 var (
 	config = &gredis.Config{
-		Host: "127.0.0.1",
-		Port: 6379,
-		Db:   1,
+		Address: `:6379`,
+		Db:      1,
 	}
 )
 
 func Test_NewClose(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
 		t.AssertNE(redis, nil)
-		err := redis.Close()
-		t.Assert(err, nil)
+
+		err = redis.Close(ctx)
+		t.AssertNil(err)
 	})
 }
 
 func Test_Do(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
-		defer redis.Close()
-		_, err := redis.Do("SET", "k", "v")
-		t.Assert(err, nil)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
 
-		r, err := redis.Do("GET", "k")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", "k", "v")
+		t.AssertNil(err)
+
+		r, err := redis.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(r, []byte("v"))
 
-		_, err = redis.Do("DEL", "k")
-		t.Assert(err, nil)
-		r, err = redis.Do("GET", "k")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "DEL", "k")
+		t.AssertNil(err)
+		r, err = redis.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(r, nil)
-	})
-}
-
-func Test_Stats(t *testing.T) {
-	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
-		defer redis.Close()
-		redis.SetMaxIdle(2)
-		redis.SetMaxActive(100)
-		redis.SetIdleTimeout(500 * time.Millisecond)
-		redis.SetMaxConnLifetime(500 * time.Millisecond)
-
-		array := make([]*gredis.Conn, 0)
-		for i := 0; i < 10; i++ {
-			array = append(array, redis.Conn())
-		}
-		stats := redis.Stats()
-		t.Assert(stats.ActiveCount, 10)
-		t.Assert(stats.IdleCount, 0)
-		for i := 0; i < 10; i++ {
-			array[i].Close()
-		}
-		stats = redis.Stats()
-		t.Assert(stats.ActiveCount, 2)
-		t.Assert(stats.IdleCount, 2)
-		//time.Sleep(3000*time.Millisecond)
-		//stats  = redis.Stats()
-		//fmt.Println(stats)
-		//t.Assert(stats.ActiveCount,  0)
-		//t.Assert(stats.IdleCount,    0)
 	})
 }
 
 func Test_Conn(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
-		defer redis.Close()
-		conn := redis.Conn()
-		defer conn.Close()
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
+		conn, err := redis.Conn(ctx)
+		t.AssertNil(err)
+		defer conn.Close(ctx)
 
 		key := gconv.String(gtime.TimestampNano())
 		value := []byte("v")
-		r, err := conn.Do("SET", key, value)
-		t.Assert(err, nil)
+		r, err := conn.Do(ctx, "SET", key, value)
+		t.AssertNil(err)
 
-		r, err = conn.Do("GET", key)
-		t.Assert(err, nil)
+		r, err = conn.Do(ctx, "GET", key)
+		t.AssertNil(err)
 		t.Assert(r, value)
 
-		_, err = conn.Do("DEL", key)
-		t.Assert(err, nil)
-		r, err = conn.Do("GET", key)
-		t.Assert(err, nil)
+		_, err = conn.Do(ctx, "DEL", key)
+		t.AssertNil(err)
+		r, err = conn.Do(ctx, "GET", key)
+		t.AssertNil(err)
 		t.Assert(r, nil)
 	})
 }
@@ -116,23 +93,25 @@ func Test_Instance(t *testing.T) {
 		group := "my-test"
 		gredis.SetConfig(config, group)
 		defer gredis.RemoveConfig(group)
+
 		redis := gredis.Instance(group)
-		defer redis.Close()
+		defer redis.Close(ctx)
 
-		conn := redis.Conn()
-		defer conn.Close()
+		conn, err := redis.Conn(ctx)
+		t.AssertNil(err)
+		defer conn.Close(ctx)
 
-		_, err := conn.Do("SET", "k", "v")
-		t.Assert(err, nil)
+		_, err = conn.Do(ctx, "SET", "k", "v")
+		t.AssertNil(err)
 
-		r, err := conn.Do("GET", "k")
-		t.Assert(err, nil)
+		r, err := conn.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(r, []byte("v"))
 
-		_, err = conn.Do("DEL", "k")
-		t.Assert(err, nil)
-		r, err = conn.Do("GET", "k")
-		t.Assert(err, nil)
+		_, err = conn.Do(ctx, "DEL", "k")
+		t.AssertNil(err)
+		r, err = conn.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(r, nil)
 	})
 }
@@ -140,61 +119,70 @@ func Test_Instance(t *testing.T) {
 func Test_Error(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		config1 := &gredis.Config{
-			Host:           "127.0.0.2",
-			Port:           6379,
-			Db:             1,
-			ConnectTimeout: time.Second,
+			Address:     "192.111.0.2:6379",
+			Db:          1,
+			DialTimeout: time.Second,
 		}
-		redis := gredis.New(config1)
-		_, err := redis.Do("info")
+		redis, err := gredis.New(config1)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
+		_, err = redis.Do(ctx, "info")
 		t.AssertNE(err, nil)
 
 		config1 = &gredis.Config{
-			Host: "127.0.0.1",
-			Port: 6379,
-			Db:   1,
-			Pass: "666666",
+			Address: "127.0.0.1:6379",
+			Db:      100,
 		}
-		redis = gredis.New(config1)
-		_, err = redis.Do("info")
-		t.AssertNE(err, nil)
+		redis, err = gredis.New(config1)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
 
-		config1 = &gredis.Config{
-			Host: "127.0.0.1",
-			Port: 6379,
-			Db:   100,
-		}
-		redis = gredis.New(config1)
-		_, err = redis.Do("info")
+		_, err = redis.Do(ctx, "info")
 		t.AssertNE(err, nil)
 
 		redis = gredis.Instance("gf")
 		t.Assert(redis == nil, true)
 		gredis.ClearConfig()
 
-		redis = gredis.New(config)
-		defer redis.Close()
-		_, err = redis.DoVar("SET", "k", "v")
-		t.Assert(err, nil)
+		redis, err = gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
 
-		v, err := redis.DoVar("GET", "k")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", "k", "v")
+		t.AssertNil(err)
+
+		v, err := redis.Do(ctx, "GET", "k")
+		t.AssertNil(err)
 		t.Assert(v.String(), "v")
 
-		conn := redis.Conn()
-		defer conn.Close()
-		_, err = conn.DoVar("SET", "k", "v")
-		t.Assert(err, nil)
+		conn, err := redis.Conn(ctx)
+		t.AssertNil(err)
+		defer conn.Close(ctx)
+		_, err = conn.Do(ctx, "SET", "k", "v")
+		t.AssertNil(err)
 
-		_, err = conn.DoVar("Subscribe", "gf")
-		t.Assert(err, nil)
+		_, err = conn.Do(ctx, "Subscribe", "gf")
+		t.AssertNil(err)
 
-		_, err = redis.DoVar("PUBLISH", "gf", "test")
-		t.Assert(err, nil)
+		time.Sleep(time.Second)
 
-		v, _ = conn.ReceiveVar()
-		t.Assert(len(v.Strings()), 3)
-		t.Assert(v.Strings()[2], "test")
+		_, err = redis.Do(ctx, "PUBLISH", "gf", "test")
+		t.AssertNil(err)
+
+		time.Sleep(time.Second)
+
+		v, err = conn.Receive(ctx)
+		t.AssertNil(err)
+		t.Assert(v.Val().(*gredis.Subscription).Channel, "gf")
+
+		v, err = conn.Receive(ctx)
+		t.AssertNil(err)
+		t.Assert(v.Val().(*gredis.Message).Channel, "gf")
+		t.Assert(v.Val().(*gredis.Message).Payload, "test")
 
 		time.Sleep(time.Second)
 	})
@@ -202,54 +190,66 @@ func Test_Error(t *testing.T) {
 
 func Test_Bool(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
 		defer func() {
-			redis.Do("DEL", "key-true")
-			redis.Do("DEL", "key-false")
+			redis.Do(ctx, "DEL", "key-true")
+			redis.Do(ctx, "DEL", "key-false")
 		}()
 
-		_, err := redis.Do("SET", "key-true", true)
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", "key-true", true)
+		t.AssertNil(err)
 
-		_, err = redis.Do("SET", "key-false", false)
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", "key-false", false)
+		t.AssertNil(err)
 
-		r, err := redis.DoVar("GET", "key-true")
-		t.Assert(err, nil)
+		r, err := redis.Do(ctx, "GET", "key-true")
+		t.AssertNil(err)
 		t.Assert(r.Bool(), true)
 
-		r, err = redis.DoVar("GET", "key-false")
-		t.Assert(err, nil)
+		r, err = redis.Do(ctx, "GET", "key-false")
+		t.AssertNil(err)
 		t.Assert(r.Bool(), false)
 	})
 }
 
 func Test_Int(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
 		key := guid.S()
-		defer redis.Do("DEL", key)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err := redis.Do("SET", key, 1)
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", key, 1)
+		t.AssertNil(err)
 
-		r, err := redis.DoVar("GET", key)
-		t.Assert(err, nil)
+		r, err := redis.Do(ctx, "GET", key)
+		t.AssertNil(err)
 		t.Assert(r.Int(), 1)
 	})
 }
 
 func Test_HSet(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		redis := gredis.New(config)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
 		key := guid.S()
-		defer redis.Do("DEL", key)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err := redis.Do("HSET", key, "name", "john")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "HSET", key, "name", "john")
+		t.AssertNil(err)
 
-		r, err := redis.DoVar("HGETALL", key)
-		t.Assert(err, nil)
+		r, err := redis.Do(ctx, "HGETALL", key)
+		t.AssertNil(err)
 		t.Assert(r.Strings(), g.ArrayStr{"name", "john"})
 	})
 }
@@ -257,19 +257,21 @@ func Test_HSet(t *testing.T) {
 func Test_HGetAll1(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		var (
-			err   error
-			key   = guid.S()
-			redis = gredis.New(config)
+			key = guid.S()
 		)
-		defer redis.Do("DEL", key)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err = redis.Do("HSET", key, "id", 100)
-		t.Assert(err, nil)
-		_, err = redis.Do("HSET", key, "name", "john")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "HSET", key, "id", 100)
+		t.AssertNil(err)
+		_, err = redis.Do(ctx, "HSET", key, "name", "john")
+		t.AssertNil(err)
 
-		r, err := redis.DoVar("HGETALL", key)
-		t.Assert(err, nil)
+		r, err := redis.Do(ctx, "HGETALL", key)
+		t.AssertNil(err)
 		t.Assert(r.Map(), g.MapStrAny{
 			"id":   100,
 			"name": "john",
@@ -280,19 +282,21 @@ func Test_HGetAll1(t *testing.T) {
 func Test_HGetAll2(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		var (
-			err   error
-			key   = guid.S()
-			redis = gredis.New(config)
+			key = guid.S()
 		)
-		defer redis.Do("DEL", key)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err = redis.Do("HSET", key, "id", 100)
-		t.Assert(err, nil)
-		_, err = redis.Do("HSET", key, "name", "john")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "HSET", key, "id", 100)
+		t.AssertNil(err)
+		_, err = redis.Do(ctx, "HSET", key, "name", "john")
+		t.AssertNil(err)
 
-		result, err := redis.DoVar("HGETALL", key)
-		t.Assert(err, nil)
+		result, err := redis.Do(ctx, "HGETALL", key)
+		t.AssertNil(err)
 
 		t.Assert(gconv.Uint(result.MapStrVar()["id"]), 100)
 		t.Assert(result.MapStrVar()["id"].Uint(), 100)
@@ -303,21 +307,23 @@ func Test_HMSet(t *testing.T) {
 	// map
 	gtest.C(t, func(t *gtest.T) {
 		var (
-			err   error
-			key   = guid.S()
-			redis = gredis.New(config)
-			data  = g.Map{
+			key  = guid.S()
+			data = g.Map{
 				"name":  "gf",
 				"sex":   0,
 				"score": 100,
 			}
 		)
-		defer redis.Do("DEL", key)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err = redis.Do("HMSET", append(g.Slice{key}, gutil.MapToSlice(data)...)...)
-		t.Assert(err, nil)
-		v, err := redis.DoVar("HMGET", key, "name")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "HMSET", append(g.Slice{key}, gutil.MapToSlice(data)...)...)
+		t.AssertNil(err)
+		v, err := redis.Do(ctx, "HMGET", key, "name")
+		t.AssertNil(err)
 		t.Assert(v.Slice(), g.Slice{data["name"]})
 	})
 	// struct
@@ -328,49 +334,54 @@ func Test_HMSet(t *testing.T) {
 			Score int    `json:"score"`
 		}
 		var (
-			err   error
-			key   = guid.S()
-			redis = gredis.New(config)
-			data  = &User{
+			key  = guid.S()
+			data = &User{
 				Name:  "gf",
 				Sex:   0,
 				Score: 100,
 			}
 		)
-		defer redis.Do("DEL", key)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+		defer redis.Do(ctx, "DEL", key)
 
-		_, err = redis.Do("HMSET", append(g.Slice{key}, gutil.StructToSlice(data)...)...)
-		t.Assert(err, nil)
-		v, err := redis.DoVar("HMGET", key, "name")
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "HMSET", append(g.Slice{key}, gutil.StructToSlice(data)...)...)
+		t.AssertNil(err)
+		v, err := redis.Do(ctx, "HMGET", key, "name")
+		t.AssertNil(err)
 		t.Assert(v.Slice(), g.Slice{data.Name})
 	})
 }
 
 func Test_Auto_Marshal(t *testing.T) {
-	var (
-		err   error
-		redis = gredis.New(config)
-		key   = guid.S()
-	)
-	defer redis.Do("DEL", key)
-
-	type User struct {
-		Id   int
-		Name string
-	}
-
 	gtest.C(t, func(t *gtest.T) {
+		var (
+			key = guid.S()
+		)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Close(ctx)
+
+		defer redis.Do(ctx, "DEL", key)
+
+		type User struct {
+			Id   int
+			Name string
+		}
+
 		user := &User{
 			Id:   10000,
 			Name: "john",
 		}
 
-		_, err = redis.Do("SET", key, user)
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", key, user)
+		t.AssertNil(err)
 
-		r, err := redis.DoVar("GET", key)
-		t.Assert(err, nil)
+		r, err := redis.Do(ctx, "GET", key)
+		t.AssertNil(err)
 		t.Assert(r.Map(), g.MapStrAny{
 			"Id":   user.Id,
 			"Name": user.Name,
@@ -384,22 +395,20 @@ func Test_Auto_Marshal(t *testing.T) {
 }
 
 func Test_Auto_MarshalSlice(t *testing.T) {
-	var (
-		err   error
-		redis = gredis.New(config)
-		key   = guid.S()
-	)
-	defer redis.Do("DEL", key)
-
-	type User struct {
-		Id   int
-		Name string
-	}
-
 	gtest.C(t, func(t *gtest.T) {
 		var (
+			key = "user-slice"
+		)
+		redis, err := gredis.New(config)
+		t.AssertNil(err)
+		t.AssertNE(redis, nil)
+		defer redis.Do(ctx, "DEL", key)
+		type User struct {
+			Id   int
+			Name string
+		}
+		var (
 			result *gvar.Var
-			key    = "user-slice"
 			users1 = []User{
 				{
 					Id:   1,
@@ -412,15 +421,15 @@ func Test_Auto_MarshalSlice(t *testing.T) {
 			}
 		)
 
-		_, err = redis.Do("SET", key, users1)
-		t.Assert(err, nil)
+		_, err = redis.Do(ctx, "SET", key, users1)
+		t.AssertNil(err)
 
-		result, err = redis.DoVar("GET", key)
-		t.Assert(err, nil)
+		result, err = redis.Do(ctx, "GET", key)
+		t.AssertNil(err)
 
 		var users2 []User
 		err = result.Structs(&users2)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(users2, users1)
 	})
 }

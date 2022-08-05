@@ -8,9 +8,11 @@ package gtime
 
 import (
 	"bytes"
-	"github.com/gogf/gf/errors/gerror"
 	"strconv"
 	"time"
+
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
 // Time is a wrapper for time.Time for additional features.
@@ -18,8 +20,8 @@ type Time struct {
 	wrapper
 }
 
-// apiUnixNano is an interface definition commonly for custom time.Time wrapper.
-type apiUnixNano interface {
+// iUnixNano is an interface definition commonly for custom time.Time wrapper.
+type iUnixNano interface {
 	UnixNano() int64
 }
 
@@ -32,10 +34,13 @@ func New(param ...interface{}) *Time {
 			return NewFromTime(r)
 		case *time.Time:
 			return NewFromTime(*r)
+
 		case Time:
 			return &r
+
 		case *Time:
 			return r
+
 		case string:
 			if len(param) > 1 {
 				switch t := param[1].(type) {
@@ -46,6 +51,7 @@ func New(param ...interface{}) *Time {
 				}
 			}
 			return NewFromStr(r)
+
 		case []byte:
 			if len(param) > 1 {
 				switch t := param[1].(type) {
@@ -56,12 +62,15 @@ func New(param ...interface{}) *Time {
 				}
 			}
 			return NewFromStr(string(r))
+
 		case int:
 			return NewFromTimeStamp(int64(r))
+
 		case int64:
 			return NewFromTimeStamp(r)
+
 		default:
-			if v, ok := r.(apiUnixNano); ok {
+			if v, ok := r.(iUnixNano); ok {
 				return NewFromTimeStamp(v.UnixNano())
 			}
 		}
@@ -217,7 +226,7 @@ func (t *Time) String() string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("Y-m-d H:i:s")
+	return t.wrapper.String()
 }
 
 // IsZero reports whether t represents the zero time instant,
@@ -244,6 +253,7 @@ func (t *Time) Add(d time.Duration) *Time {
 // AddStr parses the given duration as string and adds it to current time.
 func (t *Time) AddStr(duration string) (*Time, error) {
 	if d, err := time.ParseDuration(duration); err != nil {
+		err = gerror.Wrapf(err, `time.ParseDuration failed for string "%s"`, duration)
 		return nil, err
 	} else {
 		return t.Add(d), nil
@@ -436,7 +446,9 @@ func (t *Time) EndOfYear() *Time {
 }
 
 // MarshalJSON implements the interface MarshalJSON for json.Marshal.
-func (t *Time) MarshalJSON() ([]byte, error) {
+// Note that, DO NOT use `(t *Time) MarshalJSON() ([]byte, error)` as it looses interface
+// implement of `MarshalJSON` for struct of Time.
+func (t Time) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
@@ -462,5 +474,16 @@ func (t *Time) UnmarshalText(data []byte) error {
 		*t = *vTime
 		return nil
 	}
-	return gerror.Newf(`invalid time value: %s`, data)
+	return gerror.NewCodef(gcode.CodeInvalidParameter, `invalid time value: %s`, data)
+}
+
+// NoValidation marks this struct object will not be validated by package gvalid.
+func (t *Time) NoValidation() {}
+
+// DeepCopy implements interface for deep copy of current type.
+func (t *Time) DeepCopy() interface{} {
+	if t == nil {
+		return nil
+	}
+	return New(t.Time)
 }

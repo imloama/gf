@@ -7,6 +7,7 @@
 package utils
 
 import (
+	"bytes"
 	"strings"
 )
 
@@ -49,16 +50,20 @@ func IsLetter(b byte) bool {
 // IsNumeric checks whether the given string s is numeric.
 // Note that float string like "123.456" is also numeric.
 func IsNumeric(s string) bool {
-	length := len(s)
+	var (
+		dotCount = 0
+		length   = len(s)
+	)
 	if length == 0 {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := 0; i < length; i++ {
 		if s[i] == '-' && i == 0 {
 			continue
 		}
 		if s[i] == '.' {
-			if i > 0 && i < len(s)-1 {
+			dotCount++
+			if i > 0 && i < length-1 {
 				continue
 			} else {
 				return false
@@ -67,6 +72,9 @@ func IsNumeric(s string) bool {
 		if s[i] < '0' || s[i] > '9' {
 			return false
 		}
+	}
+	if dotCount > 1 {
+		return false
 	}
 	return true
 }
@@ -93,10 +101,12 @@ func ReplaceByMap(origin string, replaces map[string]string) string {
 
 // RemoveSymbols removes all symbols from string and lefts only numbers and letters.
 func RemoveSymbols(s string) string {
-	var b []byte
+	var b = make([]rune, 0, len(s))
 	for _, c := range s {
-		if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
-			b = append(b, byte(c))
+		if c > 127 {
+			b = append(b, c)
+		} else if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			b = append(b, c)
 		}
 	}
 	return string(b)
@@ -108,7 +118,7 @@ func EqualFoldWithoutChars(s1, s2 string) bool {
 	return strings.EqualFold(RemoveSymbols(s1), RemoveSymbols(s2))
 }
 
-// SplitAndTrim splits string <str> by a string <delimiter> to an array,
+// SplitAndTrim splits string `str` by a string `delimiter` to an array,
 // and calls Trim to every element of this array. It ignores the elements
 // which are empty after Trim.
 func SplitAndTrim(str, delimiter string, characterMask ...string) []string {
@@ -123,11 +133,39 @@ func SplitAndTrim(str, delimiter string, characterMask ...string) []string {
 }
 
 // Trim strips whitespace (or other characters) from the beginning and end of a string.
-// The optional parameter <characterMask> specifies the additional stripped characters.
+// The optional parameter `characterMask` specifies the additional stripped characters.
 func Trim(str string, characterMask ...string) string {
 	trimChars := DefaultTrimChars
 	if len(characterMask) > 0 {
 		trimChars += characterMask[0]
 	}
 	return strings.Trim(str, trimChars)
+}
+
+// FormatCmdKey formats string `s` as command key using uniformed format.
+func FormatCmdKey(s string) string {
+	return strings.ToLower(strings.Replace(s, "_", ".", -1))
+}
+
+// FormatEnvKey formats string `s` as environment key using uniformed format.
+func FormatEnvKey(s string) string {
+	return strings.ToUpper(strings.Replace(s, ".", "_", -1))
+}
+
+// StripSlashes un-quotes a quoted string by AddSlashes.
+func StripSlashes(str string) string {
+	var buf bytes.Buffer
+	l, skip := len(str), false
+	for i, char := range str {
+		if skip {
+			skip = false
+		} else if char == '\\' {
+			if i+1 < l && str[i+1] == '\\' {
+				skip = true
+			}
+			continue
+		}
+		buf.WriteRune(char)
+	}
+	return buf.String()
 }

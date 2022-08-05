@@ -8,15 +8,13 @@ package gdb
 
 import (
 	"fmt"
-	"github.com/gogf/gf/os/gcache"
 	"sync"
 	"time"
 
-	"github.com/gogf/gf/os/glog"
-)
-
-const (
-	DefaultGroupName = "default" // Default group name.
+	"github.com/gogf/gf/v2/os/gcache"
+	"github.com/gogf/gf/v2/os/glog"
+	"github.com/gogf/gf/v2/text/gregex"
+	"github.com/gogf/gf/v2/text/gstr"
 )
 
 // Config is the configuration management object.
@@ -33,13 +31,14 @@ type ConfigNode struct {
 	Pass                 string        `json:"pass"`                 // Authentication password.
 	Name                 string        `json:"name"`                 // Default used database name.
 	Type                 string        `json:"type"`                 // Database type: mysql, sqlite, mssql, pgsql, oracle.
+	Link                 string        `json:"link"`                 // (Optional) Custom link information, when it is used, configuration Host/Port/User/Pass/Name are ignored.
 	Role                 string        `json:"role"`                 // (Optional, "master" in default) Node role, used for master-slave mode: master, slave.
 	Debug                bool          `json:"debug"`                // (Optional) Debug mode enables debug information logging and output.
 	Prefix               string        `json:"prefix"`               // (Optional) Table prefix.
 	DryRun               bool          `json:"dryRun"`               // (Optional) Dry run, which does SELECT but no INSERT/UPDATE/DELETE statements.
 	Weight               int           `json:"weight"`               // (Optional) Weight for load balance calculating, it's useless if there's just one node.
 	Charset              string        `json:"charset"`              // (Optional, "utf8mb4" in default) Custom charset when operating on database.
-	LinkInfo             string        `json:"link"`                 // (Optional) Custom link information, when it is used, configuration Host/Port/User/Pass/Name are ignored.
+	Timezone             string        `json:"timezone"`             // (Optional) Sets the time zone for displaying and interpreting time stamps.
 	MaxIdleConnCount     int           `json:"maxIdle"`              // (Optional) Max idle connection configuration for underlying connection pool.
 	MaxOpenConnCount     int           `json:"maxOpen"`              // (Optional) Max open connection configuration for underlying connection pool.
 	MaxConnLifeTime      time.Duration `json:"maxLifeTime"`          // (Optional) Max amount of time a connection may be idle before being closed.
@@ -52,6 +51,10 @@ type ConfigNode struct {
 	DeletedAt            string        `json:"deletedAt"`            // (Optional) The filed name of table for automatic-filled updated datetime.
 	TimeMaintainDisabled bool          `json:"timeMaintainDisabled"` // (Optional) Disable the automatic time maintaining feature.
 }
+
+const (
+	DefaultGroupName = "default" // Default group name.
+)
 
 // configs is internal used configuration object.
 var configs struct {
@@ -71,6 +74,12 @@ func SetConfig(config Config) {
 	defer instances.Clear()
 	configs.Lock()
 	defer configs.Unlock()
+	for k, nodes := range config {
+		for i, node := range nodes {
+			nodes[i] = parseConfigNode(node)
+		}
+		config[k] = nodes
+	}
 	configs.config = config
 }
 
@@ -79,6 +88,9 @@ func SetConfigGroup(group string, nodes ConfigGroup) {
 	defer instances.Clear()
 	configs.Lock()
 	defer configs.Unlock()
+	for i, node := range nodes {
+		nodes[i] = parseConfigNode(node)
+	}
 	configs.config[group] = nodes
 }
 
@@ -87,7 +99,19 @@ func AddConfigNode(group string, node ConfigNode) {
 	defer instances.Clear()
 	configs.Lock()
 	defer configs.Unlock()
-	configs.config[group] = append(configs.config[group], node)
+	configs.config[group] = append(configs.config[group], parseConfigNode(node))
+}
+
+// parseConfigNode parses `Link` configuration syntax.
+func parseConfigNode(node ConfigNode) ConfigNode {
+	if node.Link != "" && node.Type == "" {
+		match, _ := gregex.MatchString(`([a-z]+):(.+)`, node.Link)
+		if len(match) == 3 {
+			node.Type = gstr.Trim(match[1])
+			node.Link = gstr.Trim(match[2])
+		}
+	}
+	return node
 }
 
 // AddDefaultConfigNode adds one node configuration to configuration of default group.
@@ -132,12 +156,12 @@ func IsConfigured() bool {
 }
 
 // SetLogger sets the logger for orm.
-func (c *Core) SetLogger(logger *glog.Logger) {
+func (c *Core) SetLogger(logger glog.ILogger) {
 	c.logger = logger
 }
 
-// GetLogger returns the logger of the orm.
-func (c *Core) GetLogger() *glog.Logger {
+// GetLogger returns the (logger) of the orm.
+func (c *Core) GetLogger() glog.ILogger {
 	return c.logger
 }
 
@@ -185,7 +209,7 @@ func (node *ConfigNode) String() string {
 		node.MaxIdleConnCount,
 		node.MaxOpenConnCount,
 		node.MaxConnLifeTime,
-		node.LinkInfo,
+		node.Link,
 	)
 }
 
@@ -215,31 +239,21 @@ func (c *Core) GetGroup() string {
 }
 
 // SetDryRun enables/disables the DryRun feature.
-// Deprecated, use GetConfig instead.
 func (c *Core) SetDryRun(enabled bool) {
 	c.config.DryRun = enabled
 }
 
 // GetDryRun returns the DryRun value.
-// Deprecated, use GetConfig instead.
 func (c *Core) GetDryRun() bool {
 	return c.config.DryRun || allDryRun
 }
 
 // GetPrefix returns the table prefix string configured.
-// Deprecated, use GetConfig instead.
 func (c *Core) GetPrefix() string {
 	return c.config.Prefix
 }
 
-// SetSchema changes the schema for this database connection object.
-// Importantly note that when schema configuration changed for the database,
-// it affects all operations on the database object in the future.
-func (c *Core) SetSchema(schema string) {
-	c.schema.Set(schema)
-}
-
 // GetSchema returns the schema configured.
 func (c *Core) GetSchema() string {
-	return c.schema.Val()
+	return c.schema
 }

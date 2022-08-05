@@ -9,8 +9,6 @@ package gdb
 import (
 	"context"
 	"database/sql"
-	"github.com/gogf/gf/errors/gerror"
-	"github.com/gogf/gf/os/gtime"
 )
 
 // Stmt is a prepared statement.
@@ -25,78 +23,42 @@ import (
 type Stmt struct {
 	*sql.Stmt
 	core *Core
+	link Link
 	sql  string
-}
-
-const (
-	stmtTypeExecContext     = "Statement.ExecContext"
-	stmtTypeQueryContext    = "Statement.QueryContext"
-	stmtTypeQueryRowContext = "Statement.QueryRowContext"
-)
-
-// doStmtCommit commits statement according to given `stmtType`.
-func (s *Stmt) doStmtCommit(stmtType string, ctx context.Context, args ...interface{}) (result interface{}, err error) {
-	var (
-		cancelFuncForTimeout context.CancelFunc
-		timestampMilli1      = gtime.TimestampMilli()
-	)
-	switch stmtType {
-	case stmtTypeExecContext:
-		ctx, cancelFuncForTimeout = s.core.GetCtxTimeout(ctxTimeoutTypeExec, ctx)
-		defer cancelFuncForTimeout()
-		result, err = s.Stmt.ExecContext(ctx, args...)
-
-	case stmtTypeQueryContext:
-		ctx, cancelFuncForTimeout = s.core.GetCtxTimeout(ctxTimeoutTypeQuery, ctx)
-		defer cancelFuncForTimeout()
-		result, err = s.Stmt.QueryContext(ctx, args...)
-
-	case stmtTypeQueryRowContext:
-		ctx, cancelFuncForTimeout = s.core.GetCtxTimeout(ctxTimeoutTypeQuery, ctx)
-		defer cancelFuncForTimeout()
-		result = s.Stmt.QueryRowContext(ctx, args...)
-
-	default:
-		panic(gerror.Newf(`invalid stmtType: %s`, stmtType))
-	}
-	var (
-		timestampMilli2 = gtime.TimestampMilli()
-		sqlObj          = &Sql{
-			Sql:    s.sql,
-			Type:   stmtType,
-			Args:   args,
-			Format: FormatSqlWithArgs(s.sql, args),
-			Error:  err,
-			Start:  timestampMilli1,
-			End:    timestampMilli2,
-			Group:  s.core.db.GetGroup(),
-		}
-	)
-	s.core.addSqlToTracing(ctx, sqlObj)
-	if s.core.db.GetDebug() {
-		s.core.writeSqlToLogger(sqlObj)
-	}
-	return result, err
 }
 
 // ExecContext executes a prepared statement with the given arguments and
 // returns a Result summarizing the effect of the statement.
 func (s *Stmt) ExecContext(ctx context.Context, args ...interface{}) (sql.Result, error) {
-	result, err := s.doStmtCommit(stmtTypeExecContext, ctx, args...)
-	if result != nil {
-		return result.(sql.Result), err
-	}
-	return nil, err
+	out, err := s.core.db.DoCommit(ctx, DoCommitInput{
+		Stmt:          s.Stmt,
+		Link:          s.link,
+		Sql:           s.sql,
+		Args:          args,
+		Type:          SqlTypeStmtExecContext,
+		IsTransaction: s.link.IsTransaction(),
+	})
+	return out.Result, err
 }
 
 // QueryContext executes a prepared query statement with the given arguments
 // and returns the query results as a *Rows.
 func (s *Stmt) QueryContext(ctx context.Context, args ...interface{}) (*sql.Rows, error) {
-	result, err := s.doStmtCommit(stmtTypeQueryContext, ctx, args...)
-	if result != nil {
-		return result.(*sql.Rows), err
+	out, err := s.core.db.DoCommit(ctx, DoCommitInput{
+		Stmt:          s.Stmt,
+		Link:          s.link,
+		Sql:           s.sql,
+		Args:          args,
+		Type:          SqlTypeStmtQueryContext,
+		IsTransaction: s.link.IsTransaction(),
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil, err
+	if out.RawResult != nil {
+		return out.RawResult.(*sql.Rows), err
+	}
+	return nil, nil
 }
 
 // QueryRowContext executes a prepared query statement with the given arguments.
@@ -106,9 +68,19 @@ func (s *Stmt) QueryContext(ctx context.Context, args ...interface{}) (*sql.Rows
 // Otherwise, the *Row's Scan scans the first selected row and discards
 // the rest.
 func (s *Stmt) QueryRowContext(ctx context.Context, args ...interface{}) *sql.Row {
-	result, _ := s.doStmtCommit(stmtTypeQueryRowContext, ctx, args...)
-	if result != nil {
-		return result.(*sql.Row)
+	out, err := s.core.db.DoCommit(ctx, DoCommitInput{
+		Stmt:          s.Stmt,
+		Link:          s.link,
+		Sql:           s.sql,
+		Args:          args,
+		Type:          SqlTypeStmtQueryContext,
+		IsTransaction: s.link.IsTransaction(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	if out.RawResult != nil {
+		return out.RawResult.(*sql.Row)
 	}
 	return nil
 }

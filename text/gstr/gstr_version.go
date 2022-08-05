@@ -7,14 +7,41 @@
 package gstr
 
 import (
-	"github.com/gogf/gf/util/gconv"
 	"strings"
+
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
-// CompareVersion compares <a> and <b> as standard GNU version.
-// It returns  1 if <a> > <b>.
-// It returns -1 if <a> < <b>.
-// It returns  0 if <a> = <b>.
+// IsGNUVersion checks and returns whether given `version` is valid GNU version string.
+func IsGNUVersion(version string) bool {
+	if version != "" && (version[0] == 'v' || version[0] == 'V') {
+		version = version[1:]
+	}
+	if version == "" {
+		return false
+	}
+	var array = strings.Split(version, ".")
+	if len(array) > 3 {
+		return false
+	}
+	for _, v := range array {
+		if v == "" {
+			return false
+		}
+		if !IsNumeric(v) {
+			return false
+		}
+		if v[0] == '-' || v[0] == '+' {
+			return false
+		}
+	}
+	return true
+}
+
+// CompareVersion compares `a` and `b` as standard GNU version.
+// It returns  1 if `a` > `b`.
+// It returns -1 if `a` < `b`.
+// It returns  0 if `a` = `b`.
 // GNU standard version is like:
 // v1.0
 // 1
@@ -24,10 +51,10 @@ import (
 // 10.2.0
 // etc.
 func CompareVersion(a, b string) int {
-	if a[0] == 'v' {
+	if a != "" && a[0] == 'v' {
 		a = a[1:]
 	}
-	if b[0] == 'v' {
+	if b != "" && b[0] == 'v' {
 		b = b[1:]
 	}
 	var (
@@ -58,10 +85,10 @@ func CompareVersion(a, b string) int {
 	return 0
 }
 
-// CompareVersionGo compares <a> and <b> as standard Golang version.
-// It returns  1 if <a> > <b>.
-// It returns -1 if <a> < <b>.
-// It returns  0 if <a> = <b>.
+// CompareVersionGo compares `a` and `b` as standard Golang version.
+// It returns  1 if `a` > `b`.
+// It returns -1 if `a` < `b`.
+// It returns  0 if `a` = `b`.
 // Golang standard version is like:
 // 1.0.0
 // v1.0.1
@@ -71,12 +98,18 @@ func CompareVersion(a, b string) int {
 // v4.20.0+incompatible
 // etc.
 func CompareVersionGo(a, b string) int {
-	if a[0] == 'v' {
+	a = Trim(a)
+	b = Trim(b)
+	if a != "" && a[0] == 'v' {
 		a = a[1:]
 	}
-	if b[0] == 'v' {
+	if b != "" && b[0] == 'v' {
 		b = b[1:]
 	}
+	var (
+		rawA = a
+		rawB = b
+	)
 	if Count(a, "-") > 1 {
 		if i := PosR(a, "-"); i > 0 {
 			a = a[:i]
@@ -108,6 +141,7 @@ func CompareVersionGo(a, b string) int {
 	if len(array1) <= 3 && len(array2) > 3 {
 		return 1
 	}
+
 	diff = len(array2) - len(array1)
 	for i := 0; i < diff; i++ {
 		array1 = append(array1, "0")
@@ -127,6 +161,14 @@ func CompareVersionGo(a, b string) int {
 		if v1 < v2 {
 			return -1
 		}
+	}
+	// Specially in Golang:
+	// "v4.20.1+incompatible" < "v4.20.1"
+	if Contains(rawA, "incompatible") {
+		return -1
+	}
+	if Contains(rawB, "incompatible") {
+		return 1
 	}
 	return 0
 }

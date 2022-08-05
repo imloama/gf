@@ -7,22 +7,18 @@
 package gdb
 
 import (
+	"context"
 	"fmt"
-	"github.com/gogf/gf/container/gset"
-	"github.com/gogf/gf/container/gvar"
-	"github.com/gogf/gf/internal/intlog"
-	"github.com/gogf/gf/internal/json"
-	"github.com/gogf/gf/text/gstr"
-	"github.com/gogf/gf/util/gconv"
 	"reflect"
-)
 
-// Select is alias of Model.All.
-// See Model.All.
-// Deprecated.
-func (m *Model) Select(where ...interface{}) (Result, error) {
-	return m.All(where...)
-}
+	"github.com/gogf/gf/v2/container/gset"
+	"github.com/gogf/gf/v2/container/gvar"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/internal/reflection"
+	"github.com/gogf/gf/v2/text/gstr"
+	"github.com/gogf/gf/v2/util/gconv"
+)
 
 // All does "SELECT FROM ..." statement for the model.
 // It retrieves the records from table and returns the result as slice type.
@@ -31,7 +27,8 @@ func (m *Model) Select(where ...interface{}) (Result, error) {
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
 func (m *Model) All(where ...interface{}) (Result, error) {
-	return m.doGetAll(false, where...)
+	var ctx = m.GetCtx()
+	return m.doGetAll(ctx, false, where...)
 }
 
 // doGetAll does "SELECT FROM ..." statement for the model.
@@ -41,31 +38,25 @@ func (m *Model) All(where ...interface{}) (Result, error) {
 // The parameter `limit1` specifies whether limits querying only one record if m.limit is not set.
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
-func (m *Model) doGetAll(limit1 bool, where ...interface{}) (Result, error) {
+func (m *Model) doGetAll(ctx context.Context, limit1 bool, where ...interface{}) (Result, error) {
 	if len(where) > 0 {
 		return m.Where(where[0], where[1:]...).All()
 	}
-	conditionWhere, conditionExtra, conditionArgs := m.formatCondition(limit1, false)
-	// DO NOT quote the m.fields where, in case of fields like:
-	// DISTINCT t.user_id uid
-	return m.doGetAllBySql(
-		fmt.Sprintf(
-			"SELECT %s FROM %s%s",
-			m.getFieldsFiltered(),
-			m.tables,
-			conditionWhere+conditionExtra,
-		),
-		conditionArgs...,
-	)
+	sqlWithHolder, holderArgs := m.getFormattedSqlAndArgs(ctx, queryTypeNormal, limit1)
+	return m.doGetAllBySql(ctx, queryTypeNormal, sqlWithHolder, holderArgs...)
 }
 
 // getFieldsFiltered checks the fields and fieldsEx attributes, filters and returns the fields that will
 // really be committed to underlying database driver.
 func (m *Model) getFieldsFiltered() string {
 	if m.fieldsEx == "" {
+		// No filtering, containing special chars.
+		if gstr.ContainsAny(m.fields, "()") {
+			return m.fields
+		}
 		// No filtering.
-		if !gstr.Contains(m.fields, ".") && !gstr.Contains(m.fields, " ") {
-			return m.db.QuoteString(m.fields)
+		if !gstr.ContainsAny(m.fields, ". ") {
+			return m.db.GetCore().QuoteString(m.fields)
 		}
 		return m.fields
 	}
@@ -84,7 +75,7 @@ func (m *Model) getFieldsFiltered() string {
 			panic("function FieldsEx supports only single table operations")
 		}
 		// Filter table fields with fieldEx.
-		tableFields, err := m.TableFields(m.tables)
+		tableFields, err := m.TableFields(m.tablesInit)
 		if err != nil {
 			panic(err)
 		}
@@ -104,32 +95,32 @@ func (m *Model) getFieldsFiltered() string {
 		if len(newFields) > 0 {
 			newFields += ","
 		}
-		newFields += m.db.QuoteWord(k)
+		newFields += m.db.GetCore().QuoteWord(k)
 	}
 	return newFields
 }
 
-// Chunk iterates the query result with given size and callback function.
-func (m *Model) Chunk(limit int, callback func(result Result, err error) bool) {
+// Chunk iterates the query result with given `size` and `handler` function.
+func (m *Model) Chunk(size int, handler ChunkHandler) {
 	page := m.start
 	if page <= 0 {
 		page = 1
 	}
 	model := m
 	for {
-		model = model.Page(page, limit)
+		model = model.Page(page, size)
 		data, err := model.All()
 		if err != nil {
-			callback(nil, err)
+			handler(nil, err)
 			break
 		}
 		if len(data) == 0 {
 			break
 		}
-		if callback(data, err) == false {
+		if handler(data, err) == false {
 			break
 		}
-		if len(data) < limit {
+		if len(data) < size {
 			break
 		}
 		page++
@@ -142,10 +133,11 @@ func (m *Model) Chunk(limit int, callback func(result Result, err error) bool) {
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
 func (m *Model) One(where ...interface{}) (Record, error) {
+	var ctx = m.GetCtx()
 	if len(where) > 0 {
 		return m.Where(where[0], where[1:]...).One()
 	}
-	all, err := m.doGetAll(true)
+	all, err := m.doGetAll(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +154,7 @@ func (m *Model) One(where ...interface{}) (Record, error) {
 // and fieldsAndWhere[1:] is treated as where condition fields.
 // Also see Model.Fields and Model.Where functions.
 func (m *Model) Value(fieldsAndWhere ...interface{}) (Value, error) {
+	var ctx = m.GetCtx()
 	if len(fieldsAndWhere) > 0 {
 		if len(fieldsAndWhere) > 2 {
 			return m.Fields(gconv.String(fieldsAndWhere[0])).Where(fieldsAndWhere[1], fieldsAndWhere[2:]...).Value()
@@ -171,18 +164,30 @@ func (m *Model) Value(fieldsAndWhere ...interface{}) (Value, error) {
 			return m.Fields(gconv.String(fieldsAndWhere[0])).Value()
 		}
 	}
-	one, err := m.One()
-	if err != nil {
-		return gvar.New(nil), err
+	var (
+		all Result
+		err error
+	)
+	if all, err = m.doGetAll(ctx, true); err != nil {
+		return nil, err
 	}
-	for _, v := range one {
-		return v, nil
+	if len(all) == 0 {
+		return gvar.New(nil), nil
 	}
-	return gvar.New(nil), nil
+	if internalData := m.db.GetCore().GetInternalCtxDataFromCtx(ctx); internalData != nil {
+		record := all[0]
+		if v, ok := record[internalData.FirstResultColumn]; ok {
+			return v, nil
+		}
+	}
+	return nil, gerror.NewCode(
+		gcode.CodeInternalError,
+		`query value error: the internal context data is missing. there's internal issue should be fixed`,
+	)
 }
 
 // Array queries and returns data values as slice from database.
-// Note that if there're multiple columns in the result, it returns just one column values randomly.
+// Note that if there are multiple columns in the result, it returns just one column values randomly.
 //
 // If the optional parameter `fieldsAndWhere` is given, the fieldsAndWhere[0] is the selected fields
 // and fieldsAndWhere[1:] is treated as where condition fields.
@@ -211,24 +216,33 @@ func (m *Model) Array(fieldsAndWhere ...interface{}) ([]Value, error) {
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
 //
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table and `pointer` is not nil.
+// Note that it returns sql.ErrNoRows if the given parameter `pointer` pointed to a variable that has
+// default value and there's no record retrieved with the given conditions from table.
 //
-// Eg:
+// Example:
 // user := new(User)
-// err  := db.Model("user").Where("id", 1).Struct(user)
+// err  := db.Model("user").Where("id", 1).Scan(user)
 //
 // user := (*User)(nil)
-// err  := db.Model("user").Where("id", 1).Struct(&user)
-func (m *Model) Struct(pointer interface{}, where ...interface{}) error {
-	one, err := m.One(where...)
+// err  := db.Model("user").Where("id", 1).Scan(&user).
+func (m *Model) doStruct(pointer interface{}, where ...interface{}) error {
+	model := m
+	// Auto selecting fields by struct attributes.
+	if model.fieldsEx == "" && (model.fields == "" || model.fields == "*") {
+		if v, ok := pointer.(reflect.Value); ok {
+			model = m.Fields(v.Interface())
+		} else {
+			model = m.Fields(pointer)
+		}
+	}
+	one, err := model.One(where...)
 	if err != nil {
 		return err
 	}
 	if err = one.Struct(pointer); err != nil {
 		return err
 	}
-	return m.doWithScanStruct(pointer)
+	return model.doWithScanStruct(pointer)
 }
 
 // Structs retrieves records from table and converts them into given struct slice.
@@ -238,37 +252,53 @@ func (m *Model) Struct(pointer interface{}, where ...interface{}) error {
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
 //
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table and `pointer` is not empty.
+// Note that it returns sql.ErrNoRows if the given parameter `pointer` pointed to a variable that has
+// default value and there's no record retrieved with the given conditions from table.
 //
-// Eg:
+// Example:
 // users := ([]User)(nil)
-// err   := db.Model("user").Structs(&users)
+// err   := db.Model("user").Scan(&users)
 //
 // users := ([]*User)(nil)
-// err   := db.Model("user").Structs(&users)
-func (m *Model) Structs(pointer interface{}, where ...interface{}) error {
-	all, err := m.All(where...)
+// err   := db.Model("user").Scan(&users).
+func (m *Model) doStructs(pointer interface{}, where ...interface{}) error {
+	model := m
+	// Auto selecting fields by struct attributes.
+	if model.fieldsEx == "" && (model.fields == "" || model.fields == "*") {
+		if v, ok := pointer.(reflect.Value); ok {
+			model = m.Fields(
+				reflect.New(
+					v.Type().Elem(),
+				).Interface(),
+			)
+		} else {
+			model = m.Fields(
+				reflect.New(
+					reflect.ValueOf(pointer).Elem().Type().Elem(),
+				).Interface(),
+			)
+		}
+	}
+	all, err := model.All(where...)
 	if err != nil {
 		return err
 	}
 	if err = all.Structs(pointer); err != nil {
 		return err
 	}
-	return m.doWithScanStructs(pointer)
+	return model.doWithScanStructs(pointer)
 }
 
 // Scan automatically calls Struct or Structs function according to the type of parameter `pointer`.
-// It calls function Struct if `pointer` is type of *struct/**struct.
-// It calls function Structs if `pointer` is type of *[]struct/*[]*struct.
+// It calls function doStruct if `pointer` is type of *struct/**struct.
+// It calls function doStructs if `pointer` is type of *[]struct/*[]*struct.
 //
-// The optional parameter `where` is the same as the parameter of Model.Where function,
-// see Model.Where.
+// The optional parameter `where` is the same as the parameter of Model.Where function,  see Model.Where.
 //
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table.
+// Note that it returns sql.ErrNoRows if the given parameter `pointer` pointed to a variable that has
+// default value and there's no record retrieved with the given conditions from table.
 //
-// Eg:
+// Example:
 // user := new(User)
 // err  := db.Model("user").Where("id", 1).Scan(user)
 //
@@ -279,178 +309,373 @@ func (m *Model) Structs(pointer interface{}, where ...interface{}) error {
 // err   := db.Model("user").Scan(&users)
 //
 // users := ([]*User)(nil)
-// err   := db.Model("user").Scan(&users)
+// err   := db.Model("user").Scan(&users).
 func (m *Model) Scan(pointer interface{}, where ...interface{}) error {
-	var reflectType reflect.Type
-	if v, ok := pointer.(reflect.Value); ok {
-		reflectType = v.Type()
-	} else {
-		reflectType = reflect.TypeOf(pointer)
+	reflectInfo := reflection.OriginTypeAndKind(pointer)
+	if reflectInfo.InputKind != reflect.Ptr {
+		return gerror.NewCode(
+			gcode.CodeInvalidParameter,
+			`the parameter "pointer" for function Scan should type of pointer`,
+		)
 	}
-	if gstr.Contains(reflectType.String(), "[]") {
-		return m.Structs(pointer, where...)
+	switch reflectInfo.OriginKind {
+	case reflect.Slice, reflect.Array:
+		return m.doStructs(pointer, where...)
+
+	case reflect.Struct, reflect.Invalid:
+		return m.doStruct(pointer, where...)
+
+	default:
+		return gerror.NewCode(
+			gcode.CodeInvalidParameter,
+			`element of parameter "pointer" for function Scan should type of struct/*struct/[]struct/[]*struct`,
+		)
 	}
-	return m.Struct(pointer, where...)
 }
 
 // ScanList converts `r` to struct slice which contains other complex struct attributes.
 // Note that the parameter `listPointer` should be type of *[]struct/*[]*struct.
-// Usage example:
 //
-// type Entity struct {
-// 	   User       *EntityUser
-// 	   UserDetail *EntityUserDetail
-//	   UserScores []*EntityUserScores
-// }
-// var users []*Entity
-// or
-// var users []Entity
-//
-// ScanList(&users, "User")
-// ScanList(&users, "UserDetail", "User", "uid:Uid")
-// ScanList(&users, "UserScores", "User", "uid:Uid")
-// The parameters "User"/"UserDetail"/"UserScores" in the example codes specify the target attribute struct
-// that current result will be bound to.
-// The "uid" in the example codes is the table field name of the result, and the "Uid" is the relational
-// struct attribute name. It automatically calculates the HasOne/HasMany relationship with given `relation`
-// parameter.
-// See the example or unit testing cases for clear understanding for this function.
-func (m *Model) ScanList(listPointer interface{}, attributeName string, relation ...string) (err error) {
-	all, err := m.All()
+// See Result.ScanList.
+func (m *Model) ScanList(structSlicePointer interface{}, bindToAttrName string, relationAttrNameAndFields ...string) (err error) {
+	var result Result
+	out, err := checkGetSliceElementInfoForScanList(structSlicePointer, bindToAttrName)
 	if err != nil {
 		return err
 	}
-	return all.ScanList(listPointer, attributeName, relation...)
+	if m.fields != defaultFields || m.fieldsEx != "" {
+		// There are custom fields.
+		result, err = m.All()
+	} else {
+		// Filter fields using temporary created struct using reflect.New.
+		result, err = m.Fields(reflect.New(out.BindToAttrType).Interface()).All()
+	}
+	if err != nil {
+		return err
+	}
+	var (
+		relationAttrName string
+		relationFields   string
+	)
+	switch len(relationAttrNameAndFields) {
+	case 2:
+		relationAttrName = relationAttrNameAndFields[0]
+		relationFields = relationAttrNameAndFields[1]
+	case 1:
+		relationFields = relationAttrNameAndFields[0]
+	}
+	return doScanList(doScanListInput{
+		Model:              m,
+		Result:             result,
+		StructSlicePointer: structSlicePointer,
+		StructSliceValue:   out.SliceReflectValue,
+		BindToAttrName:     bindToAttrName,
+		RelationAttrName:   relationAttrName,
+		RelationFields:     relationFields,
+	})
 }
 
 // Count does "SELECT COUNT(x) FROM ..." statement for the model.
 // The optional parameter `where` is the same as the parameter of Model.Where function,
 // see Model.Where.
 func (m *Model) Count(where ...interface{}) (int, error) {
+	var ctx = m.GetCtx()
 	if len(where) > 0 {
 		return m.Where(where[0], where[1:]...).Count()
 	}
-	countFields := "COUNT(1)"
-	if m.fields != "" && m.fields != "*" {
-		// DO NOT quote the m.fields here, in case of fields like:
-		// DISTINCT t.user_id uid
-		countFields = fmt.Sprintf(`COUNT(%s)`, m.fields)
-	}
-	conditionWhere, conditionExtra, conditionArgs := m.formatCondition(false, true)
-	s := fmt.Sprintf("SELECT %s FROM %s%s", countFields, m.tables, conditionWhere+conditionExtra)
-	if len(m.groupBy) > 0 {
-		s = fmt.Sprintf("SELECT COUNT(1) FROM (%s) count_alias", s)
-	}
-	list, err := m.doGetAllBySql(s, conditionArgs...)
+	var (
+		sqlWithHolder, holderArgs = m.getFormattedSqlAndArgs(ctx, queryTypeCount, false)
+		all, err                  = m.doGetAllBySql(ctx, queryTypeCount, sqlWithHolder, holderArgs...)
+	)
 	if err != nil {
 		return 0, err
 	}
-	if len(list) > 0 {
-		for _, v := range list[0] {
-			return v.Int(), nil
+	if len(all) > 0 {
+		if internalData := m.db.GetCore().GetInternalCtxDataFromCtx(ctx); internalData != nil {
+			record := all[0]
+			if v, ok := record[internalData.FirstResultColumn]; ok {
+				return v.Int(), nil
+			}
 		}
+		return 0, gerror.NewCode(
+			gcode.CodeInternalError,
+			`query count error: the internal context data is missing. there's internal issue should be fixed`,
+		)
 	}
 	return 0, nil
 }
 
-// FindOne retrieves and returns a single Record by Model.WherePri and Model.One.
-// Also see Model.WherePri and Model.One.
-func (m *Model) FindOne(where ...interface{}) (Record, error) {
-	if len(where) > 0 {
-		return m.WherePri(where[0], where[1:]...).One()
+// CountColumn does "SELECT COUNT(x) FROM ..." statement for the model.
+func (m *Model) CountColumn(column string) (int, error) {
+	if len(column) == 0 {
+		return 0, nil
 	}
-	return m.One()
+	return m.Fields(column).Count()
 }
 
-// FindAll retrieves and returns Result by by Model.WherePri and Model.All.
-// Also see Model.WherePri and Model.All.
-func (m *Model) FindAll(where ...interface{}) (Result, error) {
-	if len(where) > 0 {
-		return m.WherePri(where[0], where[1:]...).All()
+// Min does "SELECT MIN(x) FROM ..." statement for the model.
+func (m *Model) Min(column string) (float64, error) {
+	if len(column) == 0 {
+		return 0, nil
 	}
-	return m.All()
+	value, err := m.Fields(fmt.Sprintf(`MIN(%s)`, m.QuoteWord(column))).Value()
+	if err != nil {
+		return 0, err
+	}
+	return value.Float64(), err
 }
 
-// FindValue retrieves and returns single field value by Model.WherePri and Model.Value.
-// Also see Model.WherePri and Model.Value.
-func (m *Model) FindValue(fieldsAndWhere ...interface{}) (Value, error) {
-	if len(fieldsAndWhere) >= 2 {
-		return m.WherePri(fieldsAndWhere[1], fieldsAndWhere[2:]...).Fields(gconv.String(fieldsAndWhere[0])).Value()
+// Max does "SELECT MAX(x) FROM ..." statement for the model.
+func (m *Model) Max(column string) (float64, error) {
+	if len(column) == 0 {
+		return 0, nil
 	}
-	if len(fieldsAndWhere) == 1 {
-		return m.Fields(gconv.String(fieldsAndWhere[0])).Value()
+	value, err := m.Fields(fmt.Sprintf(`MAX(%s)`, m.QuoteWord(column))).Value()
+	if err != nil {
+		return 0, err
 	}
-	return m.Value()
+	return value.Float64(), err
 }
 
-// FindArray queries and returns data values as slice from database.
-// Note that if there are multiple columns in the result, it returns just one column values randomly.
-// Also see Model.WherePri and Model.Value.
-func (m *Model) FindArray(fieldsAndWhere ...interface{}) ([]Value, error) {
-	if len(fieldsAndWhere) >= 2 {
-		return m.WherePri(fieldsAndWhere[1], fieldsAndWhere[2:]...).Fields(gconv.String(fieldsAndWhere[0])).Array()
+// Avg does "SELECT AVG(x) FROM ..." statement for the model.
+func (m *Model) Avg(column string) (float64, error) {
+	if len(column) == 0 {
+		return 0, nil
 	}
-	if len(fieldsAndWhere) == 1 {
-		return m.Fields(gconv.String(fieldsAndWhere[0])).Array()
+	value, err := m.Fields(fmt.Sprintf(`AVG(%s)`, m.QuoteWord(column))).Value()
+	if err != nil {
+		return 0, err
 	}
-	return m.Array()
+	return value.Float64(), err
 }
 
-// FindCount retrieves and returns the record number by Model.WherePri and Model.Count.
-// Also see Model.WherePri and Model.Count.
-func (m *Model) FindCount(where ...interface{}) (int, error) {
-	if len(where) > 0 {
-		return m.WherePri(where[0], where[1:]...).Count()
+// Sum does "SELECT SUM(x) FROM ..." statement for the model.
+func (m *Model) Sum(column string) (float64, error) {
+	if len(column) == 0 {
+		return 0, nil
 	}
-	return m.Count()
+	value, err := m.Fields(fmt.Sprintf(`SUM(%s)`, m.QuoteWord(column))).Value()
+	if err != nil {
+		return 0, err
+	}
+	return value.Float64(), err
 }
 
-// FindScan retrieves and returns the record/records by Model.WherePri and Model.Scan.
-// Also see Model.WherePri and Model.Scan.
-func (m *Model) FindScan(pointer interface{}, where ...interface{}) error {
-	if len(where) > 0 {
-		return m.WherePri(where[0], where[1:]...).Scan(pointer)
+// Union does "(SELECT xxx FROM xxx) UNION (SELECT xxx FROM xxx) ..." statement for the model.
+func (m *Model) Union(unions ...*Model) *Model {
+	return m.db.Union(unions...)
+}
+
+// UnionAll does "(SELECT xxx FROM xxx) UNION ALL (SELECT xxx FROM xxx) ..." statement for the model.
+func (m *Model) UnionAll(unions ...*Model) *Model {
+	return m.db.UnionAll(unions...)
+}
+
+// Limit sets the "LIMIT" statement for the model.
+// The parameter `limit` can be either one or two number, if passed two number is passed,
+// it then sets "LIMIT limit[0],limit[1]" statement for the model, or else it sets "LIMIT limit[0]"
+// statement.
+func (m *Model) Limit(limit ...int) *Model {
+	model := m.getModel()
+	switch len(limit) {
+	case 1:
+		model.limit = limit[0]
+	case 2:
+		model.start = limit[0]
+		model.limit = limit[1]
 	}
-	return m.Scan(pointer)
+	return model
+}
+
+// Offset sets the "OFFSET" statement for the model.
+// It only makes sense for some databases like SQLServer, PostgreSQL, etc.
+func (m *Model) Offset(offset int) *Model {
+	model := m.getModel()
+	model.offset = offset
+	return model
+}
+
+// Distinct forces the query to only return distinct results.
+func (m *Model) Distinct() *Model {
+	model := m.getModel()
+	model.distinct = "DISTINCT "
+	return model
+}
+
+// Page sets the paging number for the model.
+// The parameter `page` is started from 1 for paging.
+// Note that, it differs that the Limit function starts from 0 for "LIMIT" statement.
+func (m *Model) Page(page, limit int) *Model {
+	model := m.getModel()
+	if page <= 0 {
+		page = 1
+	}
+	model.start = (page - 1) * limit
+	model.limit = limit
+	return model
+}
+
+// Having sets the having statement for the model.
+// The parameters of this function usage are as the same as function Where.
+// See Where.
+func (m *Model) Having(having interface{}, args ...interface{}) *Model {
+	model := m.getModel()
+	model.having = []interface{}{
+		having, args,
+	}
+	return model
 }
 
 // doGetAllBySql does the select statement on the database.
-func (m *Model) doGetAllBySql(sql string, args ...interface{}) (result Result, err error) {
-	cacheKey := ""
-	cacheObj := m.db.GetCache().Ctx(m.db.GetCtx())
-	// Retrieve from cache.
-	if m.cacheEnabled && m.tx == nil {
-		cacheKey = m.cacheName
-		if len(cacheKey) == 0 {
-			cacheKey = sql + ", @PARAMS:" + gconv.String(args)
-		}
-		if v, _ := cacheObj.GetVar(cacheKey); !v.IsNil() {
-			if result, ok := v.Val().(Result); ok {
-				// In-memory cache.
-				return result, nil
-			} else {
-				// Other cache, it needs conversion.
-				var result Result
-				if err = json.Unmarshal(v.Bytes(), &result); err != nil {
-					return nil, err
-				} else {
-					return result, nil
-				}
-			}
-		}
+func (m *Model) doGetAllBySql(ctx context.Context, queryType int, sql string, args ...interface{}) (result Result, err error) {
+	if result, err = m.getSelectResultFromCache(ctx, sql, args...); err != nil || result != nil {
+		return
 	}
-	result, err = m.db.DoGetAll(m.getLink(false), sql, m.mergeArguments(args)...)
-	// Cache the result.
-	if cacheKey != "" && err == nil {
-		if m.cacheDuration < 0 {
-			if _, err := cacheObj.Remove(cacheKey); err != nil {
-				intlog.Error(err)
-			}
+
+	in := &HookSelectInput{
+		internalParamHookSelect: internalParamHookSelect{
+			internalParamHook: internalParamHook{
+				link: m.getLink(false),
+			},
+			handler: m.hookHandler.Select,
+		},
+		Model: m,
+		Table: m.tables,
+		Sql:   sql,
+		Args:  m.mergeArguments(args),
+	}
+	if result, err = in.Next(ctx); err != nil {
+		return
+	}
+
+	err = m.saveSelectResultToCache(ctx, result, sql, args...)
+	return
+}
+
+func (m *Model) getFormattedSqlAndArgs(ctx context.Context, queryType int, limit1 bool) (sqlWithHolder string, holderArgs []interface{}) {
+	switch queryType {
+	case queryTypeCount:
+		queryFields := "COUNT(1)"
+		if m.fields != "" && m.fields != "*" {
+			// DO NOT quote the m.fields here, in case of fields like:
+			// DISTINCT t.user_id uid
+			queryFields = fmt.Sprintf(`COUNT(%s%s)`, m.distinct, m.fields)
+		}
+		// Raw SQL Model.
+		if m.rawSql != "" {
+			sqlWithHolder = fmt.Sprintf("SELECT %s FROM (%s) AS T", queryFields, m.rawSql)
+			return sqlWithHolder, nil
+		}
+		conditionWhere, conditionExtra, conditionArgs := m.formatCondition(ctx, false, true)
+		sqlWithHolder = fmt.Sprintf("SELECT %s FROM %s%s", queryFields, m.tables, conditionWhere+conditionExtra)
+		if len(m.groupBy) > 0 {
+			sqlWithHolder = fmt.Sprintf("SELECT COUNT(1) FROM (%s) count_alias", sqlWithHolder)
+		}
+		return sqlWithHolder, conditionArgs
+
+	default:
+		conditionWhere, conditionExtra, conditionArgs := m.formatCondition(ctx, limit1, false)
+		// Raw SQL Model, especially for UNION/UNION ALL featured SQL.
+		if m.rawSql != "" {
+			sqlWithHolder = fmt.Sprintf(
+				"%s%s",
+				m.rawSql,
+				conditionWhere+conditionExtra,
+			)
+			return sqlWithHolder, conditionArgs
+		}
+		// DO NOT quote the m.fields where, in case of fields like:
+		// DISTINCT t.user_id uid
+		sqlWithHolder = fmt.Sprintf(
+			"SELECT %s%s FROM %s%s",
+			m.distinct, m.getFieldsFiltered(), m.tables, conditionWhere+conditionExtra,
+		)
+		return sqlWithHolder, conditionArgs
+	}
+}
+
+func (m *Model) getAutoPrefix() string {
+	autoPrefix := ""
+	if gstr.Contains(m.tables, " JOIN ") {
+		autoPrefix = m.db.GetCore().QuoteWord(
+			m.db.GetCore().guessPrimaryTableName(m.tablesInit),
+		)
+	}
+	return autoPrefix
+}
+
+// formatCondition formats where arguments of the model and returns a new condition sql and its arguments.
+// Note that this function does not change any attribute value of the `m`.
+//
+// The parameter `limit1` specifies whether limits querying only one record if m.limit is not set.
+func (m *Model) formatCondition(ctx context.Context, limit1 bool, isCountStatement bool) (conditionWhere string, conditionExtra string, conditionArgs []interface{}) {
+	var autoPrefix = m.getAutoPrefix()
+	// GROUP BY.
+	if m.groupBy != "" {
+		conditionExtra += " GROUP BY " + m.groupBy
+	}
+	// WHERE
+	conditionWhere, conditionArgs = m.whereBuilder.Build()
+	softDeletingCondition := m.getConditionForSoftDeleting()
+	if m.rawSql != "" && conditionWhere != "" {
+		if gstr.ContainsI(m.rawSql, " WHERE ") {
+			conditionWhere = " AND " + conditionWhere
 		} else {
-			if err := cacheObj.Set(cacheKey, result, m.cacheDuration); err != nil {
-				intlog.Error(err)
-			}
+			conditionWhere = " WHERE " + conditionWhere
+		}
+	} else if !m.unscoped && softDeletingCondition != "" {
+		if conditionWhere == "" {
+			conditionWhere = fmt.Sprintf(` WHERE %s`, softDeletingCondition)
+		} else {
+			conditionWhere = fmt.Sprintf(` WHERE (%s) AND %s`, conditionWhere, softDeletingCondition)
+		}
+	} else {
+		if conditionWhere != "" {
+			conditionWhere = " WHERE " + conditionWhere
 		}
 	}
-	return result, err
+	// HAVING.
+	if len(m.having) > 0 {
+		havingHolder := WhereHolder{
+			Where:  m.having[0],
+			Args:   gconv.Interfaces(m.having[1]),
+			Prefix: autoPrefix,
+		}
+		havingStr, havingArgs := formatWhereHolder(ctx, m.db, formatWhereHolderInput{
+			WhereHolder: havingHolder,
+			OmitNil:     m.option&optionOmitNilWhere > 0,
+			OmitEmpty:   m.option&optionOmitEmptyWhere > 0,
+			Schema:      m.schema,
+			Table:       m.tables,
+		})
+		if len(havingStr) > 0 {
+			conditionExtra += " HAVING " + havingStr
+			conditionArgs = append(conditionArgs, havingArgs...)
+		}
+	}
+	// ORDER BY.
+	if m.orderBy != "" {
+		conditionExtra += " ORDER BY " + m.orderBy
+	}
+	// LIMIT.
+	if !isCountStatement {
+		if m.limit != 0 {
+			if m.start >= 0 {
+				conditionExtra += fmt.Sprintf(" LIMIT %d,%d", m.start, m.limit)
+			} else {
+				conditionExtra += fmt.Sprintf(" LIMIT %d", m.limit)
+			}
+		} else if limit1 {
+			conditionExtra += " LIMIT 1"
+		}
+
+		if m.offset >= 0 {
+			conditionExtra += fmt.Sprintf(" OFFSET %d", m.offset)
+		}
+	}
+
+	if m.lockInfo != "" {
+		conditionExtra += " " + m.lockInfo
+	}
+	return
 }

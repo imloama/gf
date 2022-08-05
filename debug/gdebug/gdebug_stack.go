@@ -9,9 +9,7 @@ package gdebug
 import (
 	"bytes"
 	"fmt"
-	"github.com/gogf/gf/internal/utils"
 	"runtime"
-	"strings"
 )
 
 // PrintStack prints to standard error the stack trace returned by runtime.Stack.
@@ -22,21 +20,21 @@ func PrintStack(skip ...int) {
 // Stack returns a formatted stack trace of the goroutine that calls it.
 // It calls runtime.Stack with a large enough buffer to capture the entire trace.
 func Stack(skip ...int) string {
-	return StackWithFilter("", skip...)
+	return StackWithFilter(nil, skip...)
 }
 
 // StackWithFilter returns a formatted stack trace of the goroutine that calls it.
 // It calls runtime.Stack with a large enough buffer to capture the entire trace.
 //
-// The parameter <filter> is used to filter the path of the caller.
-func StackWithFilter(filter string, skip ...int) string {
-	return StackWithFilters([]string{filter}, skip...)
+// The parameter `filter` is used to filter the path of the caller.
+func StackWithFilter(filters []string, skip ...int) string {
+	return StackWithFilters(filters, skip...)
 }
 
 // StackWithFilters returns a formatted stack trace of the goroutine that calls it.
 // It calls runtime.Stack with a large enough buffer to capture the entire trace.
 //
-// The parameter <filters> is a slice of strings, which are used to filter the path of the
+// The parameter `filters` is a slice of strings, which are used to filter the path of the
 // caller.
 //
 // TODO Improve the performance using debug.Stack.
@@ -50,7 +48,6 @@ func StackWithFilters(filters []string, skip ...int) string {
 		space                 = "  "
 		index                 = 1
 		buffer                = bytes.NewBuffer(nil)
-		filtered              = false
 		ok                    = true
 		pc, file, line, start = callerFromIndex(filters)
 	)
@@ -59,34 +56,8 @@ func StackWithFilters(filters []string, skip ...int) string {
 			pc, file, line, ok = runtime.Caller(i)
 		}
 		if ok {
-			// Filter empty file.
-			if file == "" {
+			if filterFileByFilters(file, filters) {
 				continue
-			}
-			// GOROOT filter.
-			if goRootForFilter != "" &&
-				len(file) >= len(goRootForFilter) &&
-				file[0:len(goRootForFilter)] == goRootForFilter {
-				continue
-			}
-			// Custom filtering.
-			filtered = false
-			for _, filter := range filters {
-				if filter != "" && strings.Contains(file, filter) {
-					filtered = true
-					break
-				}
-			}
-			if filtered {
-				continue
-			}
-			if strings.Contains(file, stackFilterKey) {
-				continue
-			}
-			if !utils.IsDebugEnabled() {
-				if strings.Contains(file, utils.StackFilterKeyForGoFrame) {
-					continue
-				}
 			}
 			if fn := runtime.FuncForPC(pc); fn == nil {
 				name = "unknown"

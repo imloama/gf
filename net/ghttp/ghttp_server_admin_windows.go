@@ -4,11 +4,12 @@
 // If a copy of the MIT was not distributed with this file,
 // You can obtain one at https://github.com/gogf/gf.
 
+//go:build windows
 // +build windows
 
 package ghttp
 
-// registerSignalHandler does nothing on windows platform.
+// registerSignalHandler does nothing on a window platform.
 func handleProcessSignal() {
 
 }

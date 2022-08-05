@@ -8,19 +8,21 @@
 package gfsnotify
 
 import (
-	"errors"
-	"fmt"
-	"github.com/gogf/gf/container/gset"
-	"github.com/gogf/gf/internal/intlog"
+	"context"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/gogf/gf/container/glist"
-	"github.com/gogf/gf/container/gmap"
-	"github.com/gogf/gf/container/gqueue"
-	"github.com/gogf/gf/container/gtype"
-	"github.com/gogf/gf/os/gcache"
+
+	"github.com/gogf/gf/v2/container/glist"
+	"github.com/gogf/gf/v2/container/gmap"
+	"github.com/gogf/gf/v2/container/gqueue"
+	"github.com/gogf/gf/v2/container/gset"
+	"github.com/gogf/gf/v2/container/gtype"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/internal/intlog"
+	"github.com/gogf/gf/v2/os/gcache"
 )
 
 // Watcher is the monitor for file changes.
@@ -54,6 +56,9 @@ type Event struct {
 // Op is the bits union for file operations.
 type Op uint32
 
+// internalPanic is the custom panic for internal usage.
+type internalPanic string
+
 const (
 	CREATE Op = 1 << iota
 	WRITE
@@ -63,8 +68,8 @@ const (
 )
 
 const (
-	repeatEventFilterDuration = time.Millisecond // Duration for repeated event filter.
-	callbackExitEventPanicStr = "exit"           // Custom exit event for internal usage.
+	repeatEventFilterDuration               = time.Millisecond // Duration for repeated event filter.
+	callbackExitEventPanicStr internalPanic = "exit"           // Custom exit event for internal usage.
 )
 
 var (
@@ -88,16 +93,16 @@ func New() (*Watcher, error) {
 	if watcher, err := fsnotify.NewWatcher(); err == nil {
 		w.watcher = watcher
 	} else {
-		intlog.Printf("New watcher failed: %v", err)
+		intlog.Printf(context.TODO(), "New watcher failed: %v", err)
 		return nil, err
 	}
-	w.startWatchLoop()
-	w.startEventLoop()
+	w.watchLoop()
+	w.eventLoop()
 	return w, nil
 }
 
-// Add monitors <path> using default watcher with callback function <callbackFunc>.
-// The optional parameter <recursive> specifies whether monitoring the <path> recursively, which is true in default.
+// Add monitors `path` using default watcher with callback function `callbackFunc`.
+// The optional parameter `recursive` specifies whether monitoring the `path` recursively, which is true in default.
 func Add(path string, callbackFunc func(event *Event), recursive ...bool) (callback *Callback, err error) {
 	w, err := getDefaultWatcher()
 	if err != nil {
@@ -106,11 +111,11 @@ func Add(path string, callbackFunc func(event *Event), recursive ...bool) (callb
 	return w.Add(path, callbackFunc, recursive...)
 }
 
-// AddOnce monitors <path> using default watcher with callback function <callbackFunc> only once using unique name <name>.
-// If AddOnce is called multiple times with the same <name> parameter, <path> is only added to monitor once. It returns error
-// if it's called twice with the same <name>.
+// AddOnce monitors `path` using default watcher with callback function `callbackFunc` only once using unique name `name`.
+// If AddOnce is called multiple times with the same `name` parameter, `path` is only added to monitor once. It returns error
+// if it's called twice with the same `name`.
 //
-// The optional parameter <recursive> specifies whether monitoring the <path> recursively, which is true in default.
+// The optional parameter `recursive` specifies whether monitoring the `path` recursively, which is true in default.
 func AddOnce(name, path string, callbackFunc func(event *Event), recursive ...bool) (callback *Callback, err error) {
 	w, err := getDefaultWatcher()
 	if err != nil {
@@ -119,7 +124,7 @@ func AddOnce(name, path string, callbackFunc func(event *Event), recursive ...bo
 	return w.AddOnce(name, path, callbackFunc, recursive...)
 }
 
-// Remove removes all monitoring callbacks of given <path> from watcher recursively.
+// Remove removes all monitoring callbacks of given `path` from watcher recursively.
 func Remove(path string) error {
 	w, err := getDefaultWatcher()
 	if err != nil {
@@ -139,7 +144,7 @@ func RemoveCallback(callbackId int) error {
 		callback = r.(*Callback)
 	}
 	if callback == nil {
-		return errors.New(fmt.Sprintf(`callback for id %d not found`, callbackId))
+		return gerror.NewCodef(gcode.CodeInvalidParameter, `callback for id %d not found`, callbackId)
 	}
 	w.RemoveCallback(callbackId)
 	return nil

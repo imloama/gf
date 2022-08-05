@@ -7,39 +7,47 @@
 package ghttp
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/gogf/gf/internal/intlog"
-	"github.com/gogf/gf/os/gres"
-	"github.com/gogf/gf/util/gutil"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gogf/gf/util/gconv"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 
-	"github.com/gogf/gf/os/gsession"
-
-	"github.com/gogf/gf/os/gview"
-
-	"github.com/gogf/gf/os/gfile"
-	"github.com/gogf/gf/os/glog"
+	"github.com/gogf/gf/v2/internal/intlog"
+	"github.com/gogf/gf/v2/net/gtcp"
+	"github.com/gogf/gf/v2/os/gfile"
+	"github.com/gogf/gf/v2/os/glog"
+	"github.com/gogf/gf/v2/os/gres"
+	"github.com/gogf/gf/v2/os/gsession"
+	"github.com/gogf/gf/v2/os/gview"
+	"github.com/gogf/gf/v2/text/gstr"
+	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/gutil"
 )
 
 const (
-	defaultHttpAddr   = ":80"  // Default listening port for HTTP.
-	defaultHttpsAddr  = ":443" // Default listening port for HTTPS.
-	URI_TYPE_DEFAULT  = 0      // Method name to URI converting type, which converts name to its lower case and joins the words using char '-'.
-	URI_TYPE_FULLNAME = 1      // Method name to URI converting type, which does no converting to the method name.
-	URI_TYPE_ALLLOWER = 2      // Method name to URI converting type, which converts name to its lower case.
-	URI_TYPE_CAMEL    = 3      // Method name to URI converting type, which converts name to its camel case.
+	defaultHttpAddr  = ":80"  // Default listening port for HTTP.
+	defaultHttpsAddr = ":443" // Default listening port for HTTPS.
+	UriTypeDefault   = 0      // Method names to the URI converting type, which converts name to its lower case and joins the words using char '-'.
+	UriTypeFullName  = 1      // Method names to the URI converting type, which does not convert to the method name.
+	UriTypeAllLower  = 2      // Method names to the URI converting type, which converts name to its lower case.
+	UriTypeCamel     = 3      // Method names to the URI converting type, which converts name to its camel case.
 )
 
 // ServerConfig is the HTTP Server configuration manager.
 type ServerConfig struct {
-	// ==================================
+	// ======================================================================================================
 	// Basic.
-	// ==================================
+	// ======================================================================================================
+
+	// Service name, which is for service registry and discovery.
+	Name string `json:"name"`
 
 	// Address specifies the server listening address like "port" or ":port",
 	// multiple addresses joined using ','.
@@ -47,6 +55,9 @@ type ServerConfig struct {
 
 	// HTTPSAddr specifies the HTTPS addresses, multiple addresses joined using char ','.
 	HTTPSAddr string `json:"httpsAddr"`
+
+	// Listeners specifies the custom listeners.
+	Listeners []net.Listener `json:"listeners"`
 
 	// HTTPSCertPath specifies certification file path for HTTPS service.
 	HTTPSCertPath string `json:"httpsCertPath"`
@@ -64,7 +75,7 @@ type ServerConfig struct {
 	TLSConfig *tls.Config `json:"tlsConfig"`
 
 	// Handler the handler for HTTP request.
-	Handler http.Handler `json:"-"`
+	Handler func(w http.ResponseWriter, r *http.Request) `json:"-"`
 
 	// ReadTimeout is the maximum duration for reading the entire
 	// request, including the body.
@@ -106,9 +117,9 @@ type ServerConfig struct {
 	// View specifies the default template view object for the server.
 	View *gview.View `json:"view"`
 
-	// ==================================
+	// ======================================================================================================
 	// Static.
-	// ==================================
+	// ======================================================================================================
 
 	// Rewrites specifies the URI rewrite rules map.
 	Rewrites map[string]string `json:"rewrites"`
@@ -133,9 +144,9 @@ type ServerConfig struct {
 	// It is automatically set enabled if any static path is set.
 	FileServerEnabled bool `json:"fileServerEnabled"`
 
-	// ==================================
+	// ======================================================================================================
 	// Cookie.
-	// ==================================
+	// ======================================================================================================
 
 	// CookieMaxAge specifies the max TTL for cookie items.
 	CookieMaxAge time.Duration `json:"cookieMaxAge"`
@@ -148,9 +159,21 @@ type ServerConfig struct {
 	// It also affects the default storage for session id.
 	CookieDomain string `json:"cookieDomain"`
 
-	// ==================================
+	// CookieSameSite specifies cookie SameSite property.
+	// It also affects the default storage for session id.
+	CookieSameSite string `json:"cookieSameSite"`
+
+	// CookieSameSite specifies cookie Secure property.
+	// It also affects the default storage for session id.
+	CookieSecure bool `json:"cookieSecure"`
+
+	// CookieSameSite specifies cookie HttpOnly property.
+	// It also affects the default storage for session id.
+	CookieHttpOnly bool `json:"cookieHttpOnly"`
+
+	// ======================================================================================================
 	// Session.
-	// ==================================
+	// ======================================================================================================
 
 	// SessionIdName specifies the session id name.
 	SessionIdName string `json:"sessionIdName"`
@@ -166,15 +189,16 @@ type ServerConfig struct {
 	SessionStorage gsession.Storage `json:"sessionStorage"`
 
 	// SessionCookieMaxAge specifies the cookie ttl for session id.
-	// It it is set 0, it means it expires along with browser session.
+	// If it is set 0, it means it expires along with browser session.
 	SessionCookieMaxAge time.Duration `json:"sessionCookieMaxAge"`
 
 	// SessionCookieOutput specifies whether automatic outputting session id to cookie.
 	SessionCookieOutput bool `json:"sessionCookieOutput"`
 
-	// ==================================
+	// ======================================================================================================
 	// Logging.
-	// ==================================
+	// ======================================================================================================
+
 	Logger           *glog.Logger `json:"logger"`           // Logger specifies the logger for server.
 	LogPath          string       `json:"logPath"`          // LogPath specifies the directory for storing logging files.
 	LogLevel         string       `json:"logLevel"`         // LogLevel specifies the logging level for logger.
@@ -185,19 +209,27 @@ type ServerConfig struct {
 	AccessLogEnabled bool         `json:"accessLogEnabled"` // AccessLogEnabled enables access logging content to files.
 	AccessLogPattern string       `json:"accessLogPattern"` // AccessLogPattern specifies the error log file pattern like: access-{Ymd}.log
 
-	// ==================================
+	// ======================================================================================================
 	// PProf.
-	// ==================================
+	// ======================================================================================================
+
 	PProfEnabled bool   `json:"pprofEnabled"` // PProfEnabled enables PProf feature.
 	PProfPattern string `json:"pprofPattern"` // PProfPattern specifies the PProf service pattern for router.
 
-	// ==================================
+	// ======================================================================================================
+	// API & Swagger.
+	// ======================================================================================================
+
+	OpenApiPath string `json:"openapiPath"` // OpenApiPath specifies the OpenApi specification file path.
+	SwaggerPath string `json:"swaggerPath"` // SwaggerPath specifies the swagger UI path for route registering.
+
+	// ======================================================================================================
 	// Other.
-	// ==================================
+	// ======================================================================================================
 
 	// ClientMaxBodySize specifies the max body size limit in bytes for client request.
 	// It can be configured in configuration file using string like: 1m, 10m, 500kb etc.
-	// It's 8MB in default.
+	// It's `8MB` in default.
 	ClientMaxBodySize int64 `json:"clientMaxBodySize"`
 
 	// FormParsingMemory specifies max memory buffer size in bytes which can be used for
@@ -210,7 +242,7 @@ type ServerConfig struct {
 	// registering routes.
 	NameToUriType int `json:"nameToUriType"`
 
-	// RouteOverWrite allows overwrite the route if duplicated.
+	// RouteOverWrite allows to overwrite the route if duplicated.
 	RouteOverWrite bool `json:"routeOverWrite"`
 
 	// DumpRouterMap specifies whether automatically dumps router map when server starts.
@@ -223,18 +255,15 @@ type ServerConfig struct {
 	GracefulTimeout uint8 `json:"gracefulTimeout"`
 }
 
-// Deprecated. Use NewConfig instead.
-func Config() ServerConfig {
-	return NewConfig()
-}
-
 // NewConfig creates and returns a ServerConfig object with default configurations.
-// Note that, do not define this default configuration to local package variable, as there're
+// Note that, do not define this default configuration to local package variable, as there are
 // some pointer attributes that may be shared in different servers.
 func NewConfig() ServerConfig {
 	return ServerConfig{
-		Address:             "",
+		Name:                DefaultServerName,
+		Address:             ":0",
 		HTTPSAddr:           "",
+		Listeners:           nil,
 		Handler:             nil,
 		ReadTimeout:         60 * time.Second,
 		WriteTimeout:        0, // No timeout.
@@ -243,7 +272,7 @@ func NewConfig() ServerConfig {
 		KeepAlive:           true,
 		IndexFiles:          []string{"index.html", "index.htm"},
 		IndexFolder:         false,
-		ServerAgent:         "GF HTTP Server",
+		ServerAgent:         "GoFrame HTTP Server",
 		ServerRoot:          "",
 		StaticPaths:         make([]staticPathItem, 0),
 		FileServerEnabled:   false,
@@ -310,7 +339,18 @@ func (s *Server) SetConfigWithMap(m map[string]interface{}) error {
 // SetConfig sets the configuration for the server.
 func (s *Server) SetConfig(c ServerConfig) error {
 	s.config = c
-	// Static.
+	// Automatically add ':' prefix for address if it is missed.
+	if s.config.Address != "" && !gstr.Contains(s.config.Address, ":") {
+		s.config.Address = ":" + s.config.Address
+	}
+	// It checks and uses a random free port.
+	array := gstr.Split(s.config.Address, ":")
+	if s.config.Address == "" || len(array) < 2 || array[1] == "0" {
+		s.config.Address = gstr.Join([]string{
+			array[0], gconv.String(gtcp.MustGetFreePort()),
+		}, ":")
+	}
+	// Static files root.
 	if c.ServerRoot != "" {
 		s.SetServerRoot(c.ServerRoot)
 	}
@@ -331,10 +371,11 @@ func (s *Server) SetConfig(c ServerConfig) error {
 			return err
 		}
 	}
-	s.config.Logger.SetLevelStr(s.config.LogLevel)
-
-	SetGraceful(c.Graceful)
-	intlog.Printf("SetConfig: %+v", s.config)
+	if err := s.config.Logger.SetLevelStr(s.config.LogLevel); err != nil {
+		intlog.Errorf(context.TODO(), `%+v`, err)
+	}
+	gracefulEnabled = c.Graceful
+	intlog.Printf(context.TODO(), "SetConfig: %+v", s.config)
 	return nil
 }
 
@@ -377,9 +418,29 @@ func (s *Server) SetHTTPSPort(port ...int) {
 	}
 }
 
+// SetListener set the custom listener for the server.
+func (s *Server) SetListener(listeners ...net.Listener) error {
+	if listeners == nil {
+		return gerror.NewCodef(gcode.CodeInvalidParameter, "SetListener failed: listener can not be nil")
+	}
+	if len(listeners) > 0 {
+		ports := make([]string, len(listeners))
+		for k, v := range listeners {
+			if v == nil {
+				return gerror.NewCodef(gcode.CodeInvalidParameter, "SetListener failed: listener can not be nil")
+			}
+			ports[k] = fmt.Sprintf(":%d", (v.Addr().(*net.TCPAddr)).Port)
+		}
+		s.config.Address = strings.Join(ports, ",")
+		s.config.Listeners = listeners
+	}
+	return nil
+}
+
 // EnableHTTPS enables HTTPS with given certification and key files for the server.
-// The optional parameter <tlsConfig> specifies custom TLS configuration.
+// The optional parameter `tlsConfig` specifies custom TLS configuration.
 func (s *Server) EnableHTTPS(certFile, keyFile string, tlsConfig ...*tls.Config) {
+	var ctx = context.TODO()
 	certFileRealPath := gfile.RealPath(certFile)
 	if certFileRealPath == "" {
 		certFileRealPath = gfile.RealPath(gfile.Pwd() + gfile.Separator + certFile)
@@ -392,7 +453,7 @@ func (s *Server) EnableHTTPS(certFile, keyFile string, tlsConfig ...*tls.Config)
 		certFileRealPath = certFile
 	}
 	if certFileRealPath == "" {
-		s.Logger().Fatal(fmt.Sprintf(`EnableHTTPS failed: certFile "%s" does not exist`, certFile))
+		s.Logger().Fatalf(ctx, `EnableHTTPS failed: certFile "%s" does not exist`, certFile)
 	}
 	keyFileRealPath := gfile.RealPath(keyFile)
 	if keyFileRealPath == "" {
@@ -406,7 +467,7 @@ func (s *Server) EnableHTTPS(certFile, keyFile string, tlsConfig ...*tls.Config)
 		keyFileRealPath = keyFile
 	}
 	if keyFileRealPath == "" {
-		s.Logger().Fatal(fmt.Sprintf(`EnableHTTPS failed: keyFile "%s" does not exist`, keyFile))
+		s.Logger().Fatal(ctx, `EnableHTTPS failed: keyFile "%s" does not exist`, keyFile)
 	}
 	s.config.HTTPSCertPath = certFileRealPath
 	s.config.HTTPSKeyPath = keyFileRealPath
@@ -457,13 +518,23 @@ func (s *Server) SetView(view *gview.View) {
 
 // GetName returns the name of the server.
 func (s *Server) GetName() string {
-	return s.name
+	return s.config.Name
 }
 
-// Handler returns the request handler of the server.
-func (s *Server) Handler() http.Handler {
+// SetName sets the name for the server.
+func (s *Server) SetName(name string) {
+	s.config.Name = name
+}
+
+// SetHandler sets the request handler for server.
+func (s *Server) SetHandler(h func(w http.ResponseWriter, r *http.Request)) {
+	s.config.Handler = h
+}
+
+// GetHandler returns the request handler of the server.
+func (s *Server) GetHandler() func(w http.ResponseWriter, r *http.Request) {
 	if s.config.Handler == nil {
-		return s
+		return s.ServeHTTP
 	}
 	return s.config.Handler
 }

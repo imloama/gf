@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/frame/g"
-	"github.com/gogf/gf/os/gtime"
-	"github.com/gogf/gf/test/gtest"
-	"github.com/gogf/gf/util/gconv"
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
-type apiString interface {
+type iString interface {
 	String() string
 }
 type S struct {
@@ -26,7 +26,7 @@ func (s S) String() string {
 	return "22222"
 }
 
-type apiError interface {
+type iError interface {
 	Error() string
 }
 type S1 struct {
@@ -34,6 +34,103 @@ type S1 struct {
 
 func (s1 S1) Error() string {
 	return "22222"
+}
+
+// https://github.com/gogf/gf/issues/1227
+func Test_Issue1227(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		type StructFromIssue1227 struct {
+			Name string `json:"n1"`
+		}
+		tests := []struct {
+			name   string
+			origin interface{}
+			want   string
+		}{
+			{
+				name:   "Case1",
+				origin: `{"n1":"n1"}`,
+				want:   "n1",
+			},
+			{
+				name:   "Case2",
+				origin: `{"name":"name"}`,
+				want:   "",
+			},
+			{
+				name:   "Case3",
+				origin: `{"NaMe":"NaMe"}`,
+				want:   "",
+			},
+			{
+				name:   "Case4",
+				origin: g.Map{"n1": "n1"},
+				want:   "n1",
+			},
+			{
+				name:   "Case5",
+				origin: g.Map{"NaMe": "n1"},
+				want:   "n1",
+			},
+		}
+		for _, tt := range tests {
+			p := StructFromIssue1227{}
+			if err := gconv.Struct(tt.origin, &p); err != nil {
+				t.Error(err)
+			}
+			t.Assert(p.Name, tt.want)
+		}
+	})
+
+	// Chinese key.
+	gtest.C(t, func(t *gtest.T) {
+		type StructFromIssue1227 struct {
+			Name string `json:"中文Key"`
+		}
+		tests := []struct {
+			name   string
+			origin interface{}
+			want   string
+		}{
+			{
+				name:   "Case1",
+				origin: `{"中文Key":"n1"}`,
+				want:   "n1",
+			},
+			{
+				name:   "Case2",
+				origin: `{"Key":"name"}`,
+				want:   "",
+			},
+			{
+				name:   "Case3",
+				origin: `{"NaMe":"NaMe"}`,
+				want:   "",
+			},
+			{
+				name:   "Case4",
+				origin: g.Map{"中文Key": "n1"},
+				want:   "n1",
+			},
+			{
+				name:   "Case5",
+				origin: g.Map{"中文KEY": "n1"},
+				want:   "n1",
+			},
+			{
+				name:   "Case5",
+				origin: g.Map{"KEY": "n1"},
+				want:   "",
+			},
+		}
+		for _, tt := range tests {
+			p := StructFromIssue1227{}
+			if err := gconv.Struct(tt.origin, &p); err != nil {
+				t.Error(err)
+			}
+			t.Assert(p.Name, tt.want)
+		}
+	})
 }
 
 func Test_Bool_All(t *testing.T) {
@@ -211,7 +308,7 @@ func Test_Int64_All(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		var any interface{} = nil
 		t.AssertEQ(gconv.Int64("0x00e"), int64(14))
-		t.Assert(gconv.Int64("022"), int64(18))
+		t.Assert(gconv.Int64("022"), int64(22))
 
 		t.Assert(gconv.Int64(any), int64(0))
 		t.Assert(gconv.Int64(true), 1)
@@ -405,7 +502,7 @@ func Test_Uint64_All(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		var any interface{} = nil
 		t.AssertEQ(gconv.Uint64("0x00e"), uint64(14))
-		t.Assert(gconv.Uint64("022"), uint64(18))
+		t.Assert(gconv.Uint64("022"), uint64(22))
 
 		t.AssertEQ(gconv.Uint64(any), uint64(0))
 		t.AssertEQ(gconv.Uint64(true), uint64(1))
@@ -570,12 +667,12 @@ func Test_String_All(t *testing.T) {
 		t.AssertEQ(gconv.String(boolStruct{}), "{}")
 		t.AssertEQ(gconv.String(&boolStruct{}), "{}")
 
-		var info apiString
+		var info iString
 		info = new(S)
 		t.AssertEQ(gconv.String(info), "22222")
-		var errinfo apiError
-		errinfo = new(S1)
-		t.AssertEQ(gconv.String(errinfo), "22222")
+		var errInfo iError
+		errInfo = new(S1)
+		t.AssertEQ(gconv.String(errInfo), "22222")
 	})
 }
 
@@ -644,13 +741,6 @@ func Test_Convert_All(t *testing.T) {
 		t.AssertEQ(gconv.Convert(1989, "Duration"), time.Duration(int64(1989)))
 		t.AssertEQ(gconv.Convert("1989", "Duration"), time.Duration(int64(1989)))
 		t.AssertEQ(gconv.Convert("1989", ""), "1989")
-	})
-}
-
-func Test_Time_All(t *testing.T) {
-	gtest.C(t, func(t *gtest.T) {
-		t.AssertEQ(gconv.Duration(""), time.Duration(int64(0)))
-		t.AssertEQ(gconv.GTime(""), gtime.New())
 	})
 }
 
@@ -1276,7 +1366,7 @@ func Test_Struct_PrivateAttribute_All(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		user := new(User)
 		err := gconv.Struct(g.Map{"id": 1, "name": "john"}, user)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(user.Id, 1)
 		t.Assert(user.name, "")
 	})

@@ -7,12 +7,14 @@
 package gfsnotify
 
 import (
-	"github.com/gogf/gf/container/glist"
-	"github.com/gogf/gf/internal/intlog"
+	"context"
+
+	"github.com/gogf/gf/v2/container/glist"
+	"github.com/gogf/gf/v2/internal/intlog"
 )
 
-// startWatchLoop starts the loop for event listening fro underlying inotify monitor.
-func (w *Watcher) startWatchLoop() {
+// watchLoop starts the loop for event listening from underlying inotify monitor.
+func (w *Watcher) watchLoop() {
 	go func() {
 		for {
 			select {
@@ -23,64 +25,32 @@ func (w *Watcher) startWatchLoop() {
 			// Event listening.
 			case ev := <-w.watcher.Events:
 				// Filter the repeated event in custom duration.
-				w.cache.SetIfNotExist(ev.String(), func() (interface{}, error) {
-					w.events.Push(&Event{
-						event:   ev,
-						Path:    ev.Name,
-						Op:      Op(ev.Op),
-						Watcher: w,
-					})
-					return struct{}{}, nil
-				}, repeatEventFilterDuration)
+				_, err := w.cache.SetIfNotExist(
+					context.Background(),
+					ev.String(),
+					func(ctx context.Context) (value interface{}, err error) {
+						w.events.Push(&Event{
+							event:   ev,
+							Path:    ev.Name,
+							Op:      Op(ev.Op),
+							Watcher: w,
+						})
+						return struct{}{}, nil
+					}, repeatEventFilterDuration,
+				)
+				if err != nil {
+					intlog.Errorf(context.TODO(), `%+v`, err)
+				}
 
 			case err := <-w.watcher.Errors:
-				intlog.Error(err)
+				intlog.Errorf(context.TODO(), `%+v`, err)
 			}
 		}
 	}()
 }
 
-// getCallbacks searches and returns all callbacks with given <path>.
-// It also searches its parent for callbacks if they're recursive.
-func (w *Watcher) getCallbacks(path string) (callbacks []*Callback) {
-	// Firstly add the callbacks of itself.
-	if v := w.callbacks.Get(path); v != nil {
-		for _, v := range v.(*glist.List).FrontAll() {
-			callback := v.(*Callback)
-			callbacks = append(callbacks, callback)
-		}
-	}
-	// Secondly searches its parent for callbacks.
-	dirPath := fileDir(path)
-	if v := w.callbacks.Get(dirPath); v != nil {
-		for _, v := range v.(*glist.List).FrontAll() {
-			callback := v.(*Callback)
-			if callback.recursive {
-				callbacks = append(callbacks, callback)
-			}
-		}
-	}
-	// Lastly searches the parent recursively for callbacks.
-	for {
-		parentDirPath := fileDir(dirPath)
-		if parentDirPath == dirPath {
-			break
-		}
-		if v := w.callbacks.Get(parentDirPath); v != nil {
-			for _, v := range v.(*glist.List).FrontAll() {
-				callback := v.(*Callback)
-				if callback.recursive {
-					callbacks = append(callbacks, callback)
-				}
-			}
-		}
-		dirPath = parentDirPath
-	}
-	return
-}
-
-// startEventLoop is the core event handler.
-func (w *Watcher) startEventLoop() {
+// eventLoop is the core event handler.
+func (w *Watcher) eventLoop() {
 	go func() {
 		for {
 			if v := w.events.Pop(); v != nil {
@@ -99,9 +69,9 @@ func (w *Watcher) startEventLoop() {
 						// It adds the path back to monitor.
 						// We need no worry about the repeat adding.
 						if err := w.watcher.Add(event.Path); err != nil {
-							intlog.Error(err)
+							intlog.Errorf(context.TODO(), `%+v`, err)
 						} else {
-							intlog.Printf("fake remove event, watcher re-adds monitor for: %s", event.Path)
+							intlog.Printf(context.TODO(), "fake remove event, watcher re-adds monitor for: %s", event.Path)
 						}
 						// Change the event to RENAME, which means it renames itself to its origin name.
 						event.Op = RENAME
@@ -115,9 +85,9 @@ func (w *Watcher) startEventLoop() {
 						// It might lost the monitoring for the path, so we add the path back to monitor.
 						// We need no worry about the repeat adding.
 						if err := w.watcher.Add(event.Path); err != nil {
-							intlog.Error(err)
+							intlog.Errorf(context.TODO(), `%+v`, err)
 						} else {
-							intlog.Printf("fake rename event, watcher re-adds monitor for: %s", event.Path)
+							intlog.Printf(context.TODO(), "fake rename event, watcher re-adds monitor for: %s", event.Path)
 						}
 						// Change the event to CHMOD.
 						event.Op = CHMOD
@@ -133,24 +103,24 @@ func (w *Watcher) startEventLoop() {
 						for _, subPath := range fileAllDirs(event.Path) {
 							if fileIsDir(subPath) {
 								if err := w.watcher.Add(subPath); err != nil {
-									intlog.Error(err)
+									intlog.Errorf(context.TODO(), `%+v`, err)
 								} else {
-									intlog.Printf("folder creation event, watcher adds monitor for: %s", subPath)
+									intlog.Printf(context.TODO(), "folder creation event, watcher adds monitor for: %s", subPath)
 								}
 							}
 						}
 					} else {
 						// If it's a file, it directly adds it to monitor.
 						if err := w.watcher.Add(event.Path); err != nil {
-							intlog.Error(err)
+							intlog.Errorf(context.TODO(), `%+v`, err)
 						} else {
-							intlog.Printf("file creation event, watcher adds monitor for: %s", event.Path)
+							intlog.Printf(context.TODO(), "file creation event, watcher adds monitor for: %s", event.Path)
 						}
 					}
 
 				}
 				// Calling the callbacks in order.
-				for _, v := range callbacks {
+				for _, callback := range callbacks {
 					go func(callback *Callback) {
 						defer func() {
 							if err := recover(); err != nil {
@@ -163,11 +133,50 @@ func (w *Watcher) startEventLoop() {
 							}
 						}()
 						callback.Func(event)
-					}(v)
+					}(callback)
 				}
 			} else {
 				break
 			}
 		}
 	}()
+}
+
+// getCallbacks searches and returns all callbacks with given `path`.
+// It also searches its parents for callbacks if they're recursive.
+func (w *Watcher) getCallbacks(path string) (callbacks []*Callback) {
+	// Firstly add the callbacks of itself.
+	if v := w.callbacks.Get(path); v != nil {
+		for _, v := range v.(*glist.List).FrontAll() {
+			callback := v.(*Callback)
+			callbacks = append(callbacks, callback)
+		}
+	}
+	// Secondly searches its direct parent for callbacks.
+	// It is special handling here, which is the different between `recursive` and `not recursive` logic
+	// for direct parent folder of `path` that events are from.
+	dirPath := fileDir(path)
+	if v := w.callbacks.Get(dirPath); v != nil {
+		for _, v := range v.(*glist.List).FrontAll() {
+			callback := v.(*Callback)
+			callbacks = append(callbacks, callback)
+		}
+	}
+	// Lastly searches all the parents of directory of `path` recursively for callbacks.
+	for {
+		parentDirPath := fileDir(dirPath)
+		if parentDirPath == dirPath {
+			break
+		}
+		if v := w.callbacks.Get(parentDirPath); v != nil {
+			for _, v := range v.(*glist.List).FrontAll() {
+				callback := v.(*Callback)
+				if callback.recursive {
+					callbacks = append(callbacks, callback)
+				}
+			}
+		}
+		dirPath = parentDirPath
+	}
+	return
 }

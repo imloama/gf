@@ -7,28 +7,37 @@
 package gview
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	"github.com/gogf/gf/internal/json"
-	"github.com/gogf/gf/util/gutil"
+	htmltpl "html/template"
 	"strings"
 
-	"github.com/gogf/gf/encoding/ghtml"
-	"github.com/gogf/gf/encoding/gurl"
-	"github.com/gogf/gf/os/gtime"
-	"github.com/gogf/gf/text/gstr"
-	"github.com/gogf/gf/util/gconv"
-
-	htmltpl "html/template"
+	"github.com/gogf/gf/v2/encoding/ghtml"
+	"github.com/gogf/gf/v2/encoding/gjson"
+	"github.com/gogf/gf/v2/encoding/gurl"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/text/gstr"
+	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/gmode"
+	"github.com/gogf/gf/v2/util/gutil"
 )
 
 // buildInFuncDump implements build-in template function: dump
-func (view *View) buildInFuncDump(values ...interface{}) (result string) {
-	result += "<!--\n"
-	for _, v := range values {
-		result += gutil.Export(v) + "\n"
+func (view *View) buildInFuncDump(values ...interface{}) string {
+	buffer := bytes.NewBuffer(nil)
+	buffer.WriteString("\n")
+	buffer.WriteString("<!--\n")
+	if gmode.IsDevelop() {
+		for _, v := range values {
+			gutil.DumpTo(buffer, v, gutil.DumpOption{})
+			buffer.WriteString("\n")
+		}
+	} else {
+		buffer.WriteString("dump feature is disabled as process is not running in develop mode\n")
 	}
-	result += "-->\n"
-	return result
+	buffer.WriteString("-->\n")
+	return buffer.String()
 }
 
 // buildInFuncMap implements build-in template function: map
@@ -115,7 +124,7 @@ func (view *View) buildInFuncInclude(file interface{}, data ...map[string]interf
 		return ""
 	}
 	// It will search the file internally.
-	content, err := view.Parse(path, m)
+	content, err := view.Parse(context.TODO(), path, m)
 	if err != nil {
 		return htmltpl.HTML(err.Error())
 	}
@@ -218,8 +227,88 @@ func (view *View) buildInFuncNl2Br(str interface{}) string {
 }
 
 // buildInFuncJson implements build-in template function: json ,
-// which encodes and returns <value> as JSON string.
+// which encodes and returns `value` as JSON string.
 func (view *View) buildInFuncJson(value interface{}) (string, error) {
-	b, err := json.Marshal(value)
-	return gconv.UnsafeBytesToStr(b), err
+	b, err := gjson.Marshal(value)
+	return string(b), err
+}
+
+// buildInFuncXml implements build-in template function: xml ,
+// which encodes and returns `value` as XML string.
+func (view *View) buildInFuncXml(value interface{}, rootTag ...string) (string, error) {
+	b, err := gjson.New(value).ToXml(rootTag...)
+	return string(b), err
+}
+
+// buildInFuncXml implements build-in template function: ini ,
+// which encodes and returns `value` as XML string.
+func (view *View) buildInFuncIni(value interface{}) (string, error) {
+	b, err := gjson.New(value).ToIni()
+	return string(b), err
+}
+
+// buildInFuncYaml implements build-in template function: yaml ,
+// which encodes and returns `value` as YAML string.
+func (view *View) buildInFuncYaml(value interface{}) (string, error) {
+	b, err := gjson.New(value).ToYaml()
+	return string(b), err
+}
+
+// buildInFuncYamlIndent implements build-in template function: yamli ,
+// which encodes and returns `value` as YAML string with custom indent string.
+func (view *View) buildInFuncYamlIndent(value, indent interface{}) (string, error) {
+	b, err := gjson.New(value).ToYamlIndent(gconv.String(indent))
+	return string(b), err
+}
+
+// buildInFuncToml implements build-in template function: toml ,
+// which encodes and returns `value` as TOML string.
+func (view *View) buildInFuncToml(value interface{}) (string, error) {
+	b, err := gjson.New(value).ToToml()
+	return string(b), err
+}
+
+// buildInFuncPlus implements build-in template function: plus ,
+// which returns the result that pluses all `deltas` to `value`.
+func (view *View) buildInFuncPlus(value interface{}, deltas ...interface{}) string {
+	result := gconv.Float64(value)
+	for _, v := range deltas {
+		result += gconv.Float64(v)
+	}
+	return gconv.String(result)
+}
+
+// buildInFuncMinus implements build-in template function: minus ,
+// which returns the result that subtracts all `deltas` from `value`.
+func (view *View) buildInFuncMinus(value interface{}, deltas ...interface{}) string {
+	result := gconv.Float64(value)
+	for _, v := range deltas {
+		result -= gconv.Float64(v)
+	}
+	return gconv.String(result)
+}
+
+// buildInFuncTimes implements build-in template function: times ,
+// which returns the result that multiplies `value` by all of `values`.
+func (view *View) buildInFuncTimes(value interface{}, values ...interface{}) string {
+	result := gconv.Float64(value)
+	for _, v := range values {
+		result *= gconv.Float64(v)
+	}
+	return gconv.String(result)
+}
+
+// buildInFuncDivide implements build-in template function: divide ,
+// which returns the result that divides `value` by all of `values`.
+func (view *View) buildInFuncDivide(value interface{}, values ...interface{}) string {
+	result := gconv.Float64(value)
+	for _, v := range values {
+		value2Float64 := gconv.Float64(v)
+		if value2Float64 == 0 {
+			// Invalid `value2`.
+			return "0"
+		}
+		result /= value2Float64
+	}
+	return gconv.String(result)
 }

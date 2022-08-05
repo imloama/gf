@@ -9,12 +9,14 @@ package gdb
 import (
 	"database/sql"
 	"fmt"
-	"github.com/gogf/gf/errors/gerror"
-	"github.com/gogf/gf/os/gtime"
-	"github.com/gogf/gf/text/gstr"
-	"github.com/gogf/gf/util/gconv"
-	"github.com/gogf/gf/util/gutil"
 	"reflect"
+
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/internal/reflection"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/text/gstr"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
 // Update does "UPDATE ... " statement for the model.
@@ -23,6 +25,7 @@ import (
 // and dataAndWhere[1:] is treated as where condition fields.
 // Also see Model.Data and Model.Where functions.
 func (m *Model) Update(dataAndWhere ...interface{}) (result sql.Result, err error) {
+	var ctx = m.GetCtx()
 	if len(dataAndWhere) > 0 {
 		if len(dataAndWhere) > 2 {
 			return m.Data(dataAndWhere[0]).Where(dataAndWhere[1], dataAndWhere[2:]...).Update()
@@ -34,44 +37,40 @@ func (m *Model) Update(dataAndWhere ...interface{}) (result sql.Result, err erro
 	}
 	defer func() {
 		if err == nil {
-			m.checkAndRemoveCache()
+			m.checkAndRemoveSelectCache(ctx)
 		}
 	}()
 	if m.data == nil {
-		return nil, gerror.New("updating table with empty data")
+		return nil, gerror.NewCode(gcode.CodeMissingParameter, "updating table with empty data")
 	}
 	var (
 		updateData                                    = m.data
-		fieldNameCreate                               = m.getSoftFieldNameCreated()
+		reflectInfo                                   = reflection.OriginTypeAndKind(updateData)
 		fieldNameUpdate                               = m.getSoftFieldNameUpdated()
-		fieldNameDelete                               = m.getSoftFieldNameDeleted()
-		conditionWhere, conditionExtra, conditionArgs = m.formatCondition(false, false)
+		conditionWhere, conditionExtra, conditionArgs = m.formatCondition(ctx, false, false)
 	)
-	// Automatically update the record updating time.
-	if !m.unscoped && fieldNameUpdate != "" {
-		var (
-			refValue = reflect.ValueOf(m.data)
-			refKind  = refValue.Kind()
-		)
-		if refKind == reflect.Ptr {
-			refValue = refValue.Elem()
-			refKind = refValue.Kind()
+	switch reflectInfo.OriginKind {
+	case reflect.Map, reflect.Struct:
+		var dataMap map[string]interface{}
+		dataMap, err = m.db.ConvertDataForRecord(ctx, m.data)
+		if err != nil {
+			return nil, err
 		}
-		switch refKind {
-		case reflect.Map, reflect.Struct:
-			dataMap := ConvertDataForTableRecord(m.data)
-			gutil.MapDelete(dataMap, fieldNameCreate, fieldNameUpdate, fieldNameDelete)
-			if fieldNameUpdate != "" {
-				dataMap[fieldNameUpdate] = gtime.Now().String()
-			}
-			updateData = dataMap
-		default:
-			updates := gconv.String(m.data)
+		// Automatically update the record updating time.
+		if !m.unscoped && fieldNameUpdate != "" {
+			dataMap[fieldNameUpdate] = gtime.Now().String()
+		}
+		updateData = dataMap
+
+	default:
+		updates := gconv.String(m.data)
+		// Automatically update the record updating time.
+		if !m.unscoped && fieldNameUpdate != "" {
 			if fieldNameUpdate != "" && !gstr.Contains(updates, fieldNameUpdate) {
 				updates += fmt.Sprintf(`,%s='%s'`, fieldNameUpdate, gtime.Now().String())
 			}
-			updateData = updates
 		}
+		updateData = updates
 	}
 	newData, err := m.filterDataForInsertOrUpdate(updateData)
 	if err != nil {
@@ -79,13 +78,48 @@ func (m *Model) Update(dataAndWhere ...interface{}) (result sql.Result, err erro
 	}
 	conditionStr := conditionWhere + conditionExtra
 	if !gstr.ContainsI(conditionStr, " WHERE ") {
-		return nil, gerror.New("there should be WHERE condition statement for UPDATE operation")
+		return nil, gerror.NewCode(gcode.CodeMissingParameter, "there should be WHERE condition statement for UPDATE operation")
 	}
-	return m.db.DoUpdate(
-		m.getLink(true),
-		m.tables,
-		newData,
-		conditionStr,
-		m.mergeArguments(conditionArgs)...,
-	)
+
+	in := &HookUpdateInput{
+		internalParamHookUpdate: internalParamHookUpdate{
+			internalParamHook: internalParamHook{
+				link: m.getLink(true),
+			},
+			handler: m.hookHandler.Update,
+		},
+		Model:     m,
+		Table:     m.tables,
+		Data:      newData,
+		Condition: conditionStr,
+		Args:      m.mergeArguments(conditionArgs),
+	}
+	return in.Next(ctx)
+}
+
+// UpdateAndGetAffected performs update statement and returns the affected rows number.
+func (m *Model) UpdateAndGetAffected(dataAndWhere ...interface{}) (affected int64, err error) {
+	result, err := m.Update(dataAndWhere...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// Increment increments a column's value by a given amount.
+// The parameter `amount` can be type of float or integer.
+func (m *Model) Increment(column string, amount interface{}) (sql.Result, error) {
+	return m.getModel().Data(column, &Counter{
+		Field: column,
+		Value: gconv.Float64(amount),
+	}).Update()
+}
+
+// Decrement decrements a column's value by a given amount.
+// The parameter `amount` can be type of float or integer.
+func (m *Model) Decrement(column string, amount interface{}) (sql.Result, error) {
+	return m.getModel().Data(column, &Counter{
+		Field: column,
+		Value: -gconv.Float64(amount),
+	}).Update()
 }

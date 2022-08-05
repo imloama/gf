@@ -13,5 +13,7 @@ pkg/
 bin/
 cbuild
 **/.DS_Store
-.vscode/
-.example/other/
+.test/
+cmd/gf/main
+cmd/gf/gf
+go.work

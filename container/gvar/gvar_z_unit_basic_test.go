@@ -9,12 +9,13 @@ package gvar_test
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/gogf/gf/util/gconv"
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/container/gvar"
-	"github.com/gogf/gf/test/gtest"
+	"github.com/gogf/gf/v2/container/gvar"
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
 func Test_Set(t *testing.T) {
@@ -28,10 +29,7 @@ func Test_Set(t *testing.T) {
 		v.Set(123.456)
 		t.Assert(v.Val(), 123.456)
 	})
-	gtest.C(t, func(t *gtest.T) {
-		v := gvar.Create(123.456)
-		t.Assert(v.Val(), 123.456)
-	})
+
 	gtest.C(t, func(t *gtest.T) {
 		objOne := gvar.New("old", true)
 		objOneOld, _ := objOne.Set("new").(string)
@@ -52,6 +50,9 @@ func Test_Val(t *testing.T) {
 		objTwo := gvar.New(1, false)
 		objTwoOld, _ := objTwo.Val().(int)
 		t.Assert(objTwoOld, 1)
+
+		objOne = nil
+		t.Assert(objOne.Val(), nil)
 	})
 }
 func Test_Interface(t *testing.T) {
@@ -256,7 +257,7 @@ func Test_UnmarshalJson(t *testing.T) {
 			"name": "john",
 			"var":  "v",
 		}, &v)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(v.Name, "john")
 		t.Assert(v.Var.String(), "v")
 	})
@@ -270,7 +271,7 @@ func Test_UnmarshalJson(t *testing.T) {
 			"name": "john",
 			"var":  "v",
 		}, &v)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(v.Name, "john")
 		t.Assert(v.Var.String(), "v")
 	})
@@ -287,7 +288,7 @@ func Test_UnmarshalValue(t *testing.T) {
 			"name": "john",
 			"var":  "v",
 		}, &v)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(v.Name, "john")
 		t.Assert(v.Var.String(), "v")
 	})
@@ -301,8 +302,51 @@ func Test_UnmarshalValue(t *testing.T) {
 			"name": "john",
 			"var":  "v",
 		}, &v)
-		t.Assert(err, nil)
+		t.AssertNil(err)
 		t.Assert(v.Name, "john")
 		t.Assert(v.Var.String(), "v")
+	})
+}
+
+func Test_Copy(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		src := g.Map{
+			"k1": "v1",
+			"k2": "v2",
+		}
+		srcVar := gvar.New(src)
+		dstVar := srcVar.Copy()
+		t.Assert(srcVar.Map(), src)
+		t.Assert(dstVar.Map(), src)
+
+		dstVar.Map()["k3"] = "v3"
+		t.Assert(srcVar.Map(), g.Map{
+			"k1": "v1",
+			"k2": "v2",
+		})
+		t.Assert(dstVar.Map(), g.Map{
+			"k1": "v1",
+			"k2": "v2",
+			"k3": "v3",
+		})
+	})
+}
+
+func Test_DeepCopy(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		src := g.Map{
+			"k1": "v1",
+			"k2": "v2",
+		}
+		srcVar := gvar.New(src)
+		copyVar := srcVar.DeepCopy().(*gvar.Var)
+		copyVar.Set(g.Map{
+			"k3": "v3",
+			"k4": "v4",
+		})
+		t.AssertNE(srcVar, copyVar)
+
+		srcVar = nil
+		t.AssertNil(srcVar.DeepCopy())
 	})
 }
